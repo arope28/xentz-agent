@@ -1,15 +1,109 @@
-h2. xentz-agent - Backup Agent
+# xentz-agent - Cross-Platform Backup Agent
 
-Quick Start:
-1. Install restic: `brew install restic`
-2. Run: `./xentz-agent install --repo <your-repo> --password <password> --include <paths>`
+A lightweight backup agent that uses restic to perform scheduled backups on macOS, Windows, and Linux.
 
-Example:
-  `./xentz-agent install --repo rest:https://your-repo.com/backup --password "your-password" --include "/Users/yourname/Documents"`
+## Supported Platforms
 
-Commands:
-  ```
-  ./xentz-agent install --repo <url> --password <pwd> --include <paths>
-  ./xentz-agent backup
-  ./xentz-agent status
+### Operating Systems
+- **macOS** (Intel and Apple Silicon)
+  - Uses launchd for scheduling
+- **Windows** (amd64 and arm64)
+  - Uses Task Scheduler for scheduling
+- **Linux** (amd64, arm64, and armv7)
+  - Uses systemd (preferred) or cron (fallback) for scheduling
+
+### Architectures
+- **amd64** (Intel/AMD 64-bit)
+- **arm64** (Apple Silicon, Windows on ARM, ARM64 Linux)
+- **armv7** (32-bit ARM, e.g., Raspberry Pi)
+
+## Quick Start
+
+### Option 1: Automatic Installer (Recommended)
+
+The installer automatically detects your OS and architecture and downloads the correct binary.
+
+**macOS/Linux:**
+```bash
+curl -fsSL https://github.com/arope28/xentz-agent/releases/latest/download/install.sh | bash
 ```
+
+**Windows (PowerShell):**
+```powershell
+irm https://github.com/arope28/xentz-agent/releases/latest/download/install.ps1 | iex
+```
+
+**Or download and run manually:**
+- Download `install.sh` (macOS/Linux) or `install.ps1` (Windows)
+- Make executable: `chmod +x install.sh`
+- Run: `./install.sh` or `.\install.ps1`
+
+### Option 2: Manual Download
+
+1. **Install restic** (required dependency):
+   - macOS: `brew install restic`
+   - Linux: `sudo apt install restic` or `sudo yum install restic`
+   - Windows: Download from [restic.net](https://restic.net)
+
+2. **Download the appropriate binary** for your platform from the [releases page](https://github.com/arope28/xentz-agent/releases).
+
+3. **Install and configure**:
+   ```bash
+   ./xentz-agent install --repo rest:https://your-repo.com/backup \
+     --password "your-password" \
+     --daily-at 02:00 \
+     --include "/Users/yourname/Documents"
+   ```
+
+## Commands
+
+```bash
+# Install the agent and schedule daily backups
+xentz-agent install --repo <url> --password <pwd> --include <paths>
+
+# Run a backup manually
+xentz-agent backup
+
+# Check the status of the last backup
+xentz-agent status
+```
+
+## Building from Source
+
+### Build for All Platforms
+
+**On macOS/Linux:**
+```bash
+chmod +x build.sh
+./build.sh
+```
+
+**On Windows:**
+```cmd
+build.bat
+```
+
+This creates executables in the `dist/` directory for all supported platforms and architectures.
+
+### Build for Specific Platform
+
+```bash
+# macOS (Intel)
+GOOS=darwin GOARCH=amd64 go build -o xentz-agent ./cmd/xentz-agent
+
+# macOS (Apple Silicon)
+GOOS=darwin GOARCH=arm64 go build -o xentz-agent ./cmd/xentz-agent
+
+# Windows
+GOOS=windows GOARCH=amd64 go build -o xentz-agent.exe ./cmd/xentz-agent
+
+# Linux
+GOOS=linux GOARCH=amd64 go build -o xentz-agent ./cmd/xentz-agent
+```
+
+## Notes
+
+- **macOS ARM64 vs Intel**: No code changes needed! The same code works on both architectures. Just build separate binaries or use a universal binary (created automatically by `build.sh` on macOS).
+- **Linux ARMv7**: Included for compatibility with older ARM devices like Raspberry Pi.
+- **Windows on ARM**: Full support for Windows 11 on ARM devices.
+- The `install` command automatically detects your OS and uses the appropriate scheduler.

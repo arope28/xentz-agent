@@ -7,6 +7,11 @@ xentz-agent-*
 *.so
 *.dylib
 
+# Build output
+dist/
+install-xentz-agent
+install-xentz-agent.exe
+
 # Test binary, built with `go test -c`
 *.test
 
