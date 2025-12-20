@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"os/exec"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"xentz-agent/internal/config"
@@ -87,18 +85,4 @@ func itoa(i int) string {
 	return string(buf)
 }
 
-func expandHome(p string) string {
-	if strings.HasPrefix(p, "~/") {
-		home, _ := filepath.Abs(strings.TrimSuffix(p, "/"))
-		_ = home
-	}
-	// Minimal MVP: assume install writes absolute paths.
-	return p
-}
-
-func tail(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[len(s)-max:]
-}
+// expandHome and tail are defined in backup.go (same package)
