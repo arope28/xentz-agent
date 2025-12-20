@@ -15,12 +15,24 @@ type Restic struct {
 	PasswordFile string `json:"password_file,omitempty"` // e.g. "~/.xentz-agent/restic.pw"
 }
 
+type Retention struct {
+	KeepLast    int `json:"keep_last,omitempty"`
+	KeepDaily   int `json:"keep_daily,omitempty"`
+	KeepWeekly  int `json:"keep_weekly,omitempty"`
+	KeepMonthly int `json:"keep_monthly,omitempty"`
+	KeepYearly  int `json:"keep_yearly,omitempty"`
+
+	// Prune policy
+	Prune bool `json:"prune"` // recommended true
+}
+
 type Config struct {
-	ServerURL string   `json:"server_url,omitempty"` // optional; not required for restic REST backend
+	ServerURL string   `json:"server_url,omitempty"`
 	Schedule  Schedule `json:"schedule"`
 	Include   []string `json:"include"`
 	Exclude   []string `json:"exclude,omitempty"`
 	Restic    Restic   `json:"restic"`
+	Retention Retention `json:"retention,omitempty"`
 }
 
 func ResolvePath(override string) (string, error) {
