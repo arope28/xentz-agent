@@ -12,7 +12,6 @@ NC='\033[0m' # No Color
 
 # Configuration - Update these URLs to point to your release binaries
 BASE_URL="${XENTZ_AGENT_BASE_URL:-https://github.com/arope28/xentz-agent/releases/latest/download}"
-INSTALL_DIR="${HOME}/.local/bin"
 BINARY_NAME="xentz-agent"
 
 echo -e "${GREEN}xentz-agent Installer${NC}"
@@ -71,7 +70,16 @@ PLATFORM=$(detect_platform)
 OS=$(echo $PLATFORM | cut -d'-' -f1)
 ARCH=$(echo $PLATFORM | cut -d'-' -f2)
 
+# Set install directory based on OS
+if [ "$OS" = "darwin" ]; then
+    INSTALL_DIR="${HOME}/bin"
+else
+    # Linux - use XDG standard
+    INSTALL_DIR="${HOME}/.local/bin"
+fi
+
 echo "Detected: $OS ($ARCH)"
+echo "Install directory: $INSTALL_DIR"
 echo ""
 
 # Check for restic
@@ -218,8 +226,13 @@ echo ""
 # Check if install directory is in PATH
 if [[ ":$PATH:" != *":${INSTALL_DIR}:"* ]]; then
     echo -e "${YELLOW}Note: ${INSTALL_DIR} is not in your PATH${NC}"
-    echo "Add this to your ~/.bashrc, ~/.zshrc, or ~/.profile:"
-    echo "  export PATH=\"\${HOME}/.local/bin:\$PATH\""
+    if [ "$OS" = "darwin" ]; then
+        echo "Add this to your ~/.zshrc or ~/.bash_profile:"
+        echo "  export PATH=\"\${HOME}/bin:\$PATH\""
+    else
+        echo "Add this to your ~/.bashrc, ~/.zshrc, or ~/.profile:"
+        echo "  export PATH=\"\${HOME}/.local/bin:\$PATH\""
+    fi
     echo ""
     echo "Or run the agent directly:"
     echo "  ${INSTALL_DIR}/${BINARY_NAME} --help"

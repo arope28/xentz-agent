@@ -117,7 +117,11 @@ func main() {
 
 	if osName == "windows" {
 		installDir = filepath.Join(os.Getenv("LOCALAPPDATA"), "xentz-agent")
+	} else if osName == "darwin" {
+		// macOS: use ~/bin (more common on macOS)
+		installDir = filepath.Join(home, "bin")
 	} else {
+		// Linux: use ~/.local/bin (XDG standard)
 		installDir = filepath.Join(home, ".local", "bin")
 	}
 
@@ -157,6 +161,9 @@ func main() {
 		if osName == "windows" {
 			fmt.Println("Add it to your PATH:")
 			fmt.Printf("  [Environment]::SetEnvironmentVariable('Path', \"$env:Path;%s\", 'User')\n", installDir)
+		} else if osName == "darwin" {
+			fmt.Println("Add this to your ~/.zshrc or ~/.bash_profile:")
+			fmt.Printf("  export PATH=\"%s:$PATH\"\n", installDir)
 		} else {
 			fmt.Println("Add this to your ~/.bashrc, ~/.zshrc, or ~/.profile:")
 			fmt.Printf("  export PATH=\"%s:$PATH\"\n", installDir)
