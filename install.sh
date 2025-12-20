@@ -73,6 +73,107 @@ ARCH=$(echo $PLATFORM | cut -d'-' -f2)
 echo "Detected: $OS ($ARCH)"
 echo ""
 
+# Check for restic
+check_restic() {
+    if command -v restic &> /dev/null; then
+        echo -e "${GREEN}✓ restic is already installed${NC}"
+        restic version
+        return 0
+    else
+        echo -e "${YELLOW}⚠ restic is not installed${NC}"
+        return 1
+    fi
+}
+
+install_restic() {
+    echo ""
+    echo "Attempting to install restic..."
+    
+    if [ "$OS" = "darwin" ]; then
+        # macOS - try Homebrew
+        if command -v brew &> /dev/null; then
+            echo "Installing restic via Homebrew..."
+            if brew install restic; then
+                echo -e "${GREEN}✓ restic installed successfully${NC}"
+                return 0
+            else
+                echo -e "${RED}✗ Failed to install restic via Homebrew${NC}"
+                return 1
+            fi
+        else
+            echo -e "${YELLOW}Homebrew not found. Please install restic manually:${NC}"
+            echo "  brew install restic"
+            echo "  Or download from: https://restic.net"
+            return 1
+        fi
+    else
+        # Linux - try different package managers
+        if command -v apt-get &> /dev/null; then
+            echo "Installing restic via apt..."
+            if sudo apt-get update && sudo apt-get install -y restic; then
+                echo -e "${GREEN}✓ restic installed successfully${NC}"
+                return 0
+            else
+                echo -e "${RED}✗ Failed to install restic via apt${NC}"
+                return 1
+            fi
+        elif command -v yum &> /dev/null; then
+            echo "Installing restic via yum..."
+            if sudo yum install -y restic; then
+                echo -e "${GREEN}✓ restic installed successfully${NC}"
+                return 0
+            else
+                echo -e "${RED}✗ Failed to install restic via yum${NC}"
+                return 1
+            fi
+        elif command -v dnf &> /dev/null; then
+            echo "Installing restic via dnf..."
+            if sudo dnf install -y restic; then
+                echo -e "${GREEN}✓ restic installed successfully${NC}"
+                return 0
+            else
+                echo -e "${RED}✗ Failed to install restic via dnf${NC}"
+                return 1
+            fi
+        elif command -v pacman &> /dev/null; then
+            echo "Installing restic via pacman..."
+            if sudo pacman -S --noconfirm restic; then
+                echo -e "${GREEN}✓ restic installed successfully${NC}"
+                return 0
+            else
+                echo -e "${RED}✗ Failed to install restic via pacman${NC}"
+                return 1
+            fi
+        else
+            echo -e "${YELLOW}No supported package manager found. Please install restic manually:${NC}"
+            echo "  Visit: https://restic.net"
+            return 1
+        fi
+    fi
+}
+
+# Check and install restic
+if ! check_restic; then
+    echo ""
+    read -p "Would you like to install restic now? (y/N) " -n 1 -r
+    echo ""
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        if ! install_restic; then
+            echo ""
+            echo -e "${YELLOW}Please install restic manually before using xentz-agent${NC}"
+        fi
+    else
+        echo ""
+        echo -e "${YELLOW}Please install restic manually before using xentz-agent:${NC}"
+        if [ "$OS" = "darwin" ]; then
+            echo "  brew install restic"
+        else
+            echo "  sudo apt install restic  (or your package manager)"
+        fi
+    fi
+    echo ""
+fi
+
 # Determine binary name
 if [ "$OS" = "windows" ]; then
     BINARY_FILE="${BINARY_NAME}-${OS}-${ARCH}.exe"
@@ -128,6 +229,8 @@ fi
 
 echo ""
 echo "Next steps:"
-echo "  1. Install restic: brew install restic  (macOS) or apt install restic (Linux)"
+if ! command -v restic &> /dev/null; then
+    echo "  1. Install restic if not already installed"
+fi
 echo "  2. Run: ${BINARY_NAME} install --repo <your-repo> --password <pwd> --include <paths>"
 

@@ -33,6 +33,89 @@ if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64" -or $env:PROCESSOR_ARCHITEW6432 -eq 
 Write-Output "Detected: Windows ($Arch)"
 Write-Output ""
 
+# Check for restic
+function Test-Restic {
+    try {
+        $null = Get-Command restic -ErrorAction Stop
+        Write-ColorOutput Green "✓ restic is already installed"
+        restic version
+        return $true
+    } catch {
+        Write-ColorOutput Yellow "⚠ restic is not installed"
+        return $false
+    }
+}
+
+function Install-Restic {
+    Write-Output ""
+    Write-Output "Attempting to install restic..."
+    
+    # Try winget first (Windows 10/11)
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Output "Installing restic via winget..."
+        try {
+            winget install --id restic.restic --accept-package-agreements --accept-source-agreements
+            if ($LASTEXITCODE -eq 0) {
+                Write-ColorOutput Green "✓ restic installed successfully"
+                return $true
+            }
+        } catch {
+            Write-ColorOutput Red "✗ Failed to install restic via winget"
+        }
+    }
+    
+    # Try Chocolatey
+    if (Get-Command choco -ErrorAction SilentlyContinue) {
+        Write-Output "Installing restic via Chocolatey..."
+        try {
+            choco install restic -y
+            if ($LASTEXITCODE -eq 0) {
+                Write-ColorOutput Green "✓ restic installed successfully"
+                return $true
+            }
+        } catch {
+            Write-ColorOutput Red "✗ Failed to install restic via Chocolatey"
+        }
+    }
+    
+    # Try Scoop
+    if (Get-Command scoop -ErrorAction SilentlyContinue) {
+        Write-Output "Installing restic via Scoop..."
+        try {
+            scoop install restic
+            if ($LASTEXITCODE -eq 0) {
+                Write-ColorOutput Green "✓ restic installed successfully"
+                return $true
+            }
+        } catch {
+            Write-ColorOutput Red "✗ Failed to install restic via Scoop"
+        }
+    }
+    
+    Write-ColorOutput Yellow "No supported package manager found. Please install restic manually:"
+    Write-Output "  winget install restic.restic"
+    Write-Output "  Or download from: https://restic.net"
+    return $false
+}
+
+# Check and install restic
+if (-not (Test-Restic)) {
+    Write-Output ""
+    $response = Read-Host "Would you like to install restic now? (y/N)"
+    if ($response -match "^[Yy]$") {
+        if (-not (Install-Restic)) {
+            Write-Output ""
+            Write-ColorOutput Yellow "Please install restic manually before using xentz-agent"
+        }
+    } else {
+        Write-Output ""
+        Write-ColorOutput Yellow "Please install restic manually before using xentz-agent:"
+        Write-Output "  winget install restic.restic"
+        Write-Output "  Or download from: https://restic.net"
+    }
+    Write-Output ""
+}
+
 $BinaryFile = "${BinaryName}-windows-${Arch}.exe"
 $DownloadUrl = "$BaseUrl/$BinaryFile"
 
@@ -77,6 +160,8 @@ if ($PathEnv -notlike "*$InstallDir*") {
 
 Write-Output ""
 Write-Output "Next steps:"
-Write-Output "  1. Install restic: winget install restic.restic  or download from https://restic.net"
+if (-not (Get-Command restic -ErrorAction SilentlyContinue)) {
+    Write-Output "  1. Install restic if not already installed"
+}
 Write-Output "  2. Run: $BinaryName install --repo <your-repo> --password <pwd> --include <paths>"
 

@@ -39,6 +39,40 @@ func main() {
 		fmt.Printf("Detected: %s (%s)\n", osName, arch)
 	}
 
+	// Check for restic
+	if !checkRestic() {
+		fmt.Println("")
+		fmt.Println("⚠ restic is not installed")
+		fmt.Println("")
+		fmt.Print("Would you like to install restic now? (y/N): ")
+		var response string
+		fmt.Scanln(&response)
+		if response == "y" || response == "Y" {
+			if !installRestic(osName) {
+				fmt.Println("")
+				fmt.Println("Please install restic manually before using xentz-agent")
+			}
+		} else {
+			fmt.Println("")
+			fmt.Println("Please install restic manually before using xentz-agent:")
+			if osName == "windows" {
+				fmt.Println("  winget install restic.restic")
+			} else if osName == "darwin" {
+				fmt.Println("  brew install restic")
+			} else {
+				fmt.Println("  sudo apt install restic (or your package manager)")
+			}
+		}
+		fmt.Println("")
+	} else {
+		fmt.Println("✓ restic is already installed")
+		cmd := exec.Command("restic", "version")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		_ = cmd.Run()
+		fmt.Println("")
+	}
+
 	// Determine binary name
 	var binaryFile string
 	var binaryName string
@@ -137,14 +171,80 @@ func main() {
 
 	fmt.Println("")
 	fmt.Println("Next steps:")
-	if osName == "windows" {
-		fmt.Println("  1. Install restic: winget install restic.restic")
-	} else if osName == "darwin" {
-		fmt.Println("  1. Install restic: brew install restic")
-	} else {
-		fmt.Println("  1. Install restic: sudo apt install restic (or your package manager)")
+	if !checkRestic() {
+		fmt.Println("  1. Install restic if not already installed")
 	}
 	fmt.Printf("  2. Run: %s install --repo <your-repo> --password <pwd> --include <paths>\n", binaryName)
+}
+
+func checkRestic() bool {
+	_, err := exec.LookPath("restic")
+	return err == nil
+}
+
+func installRestic(osName string) bool {
+	fmt.Println("")
+	fmt.Println("Attempting to install restic...")
+
+	var cmd *exec.Cmd
+
+	switch osName {
+	case "darwin":
+		// Check for Homebrew
+		if _, err := exec.LookPath("brew"); err == nil {
+			fmt.Println("Installing restic via Homebrew...")
+			cmd = exec.Command("brew", "install", "restic")
+		} else {
+			fmt.Println("Homebrew not found. Please install restic manually:")
+			fmt.Println("  brew install restic")
+			return false
+		}
+	case "windows":
+		// Try winget
+		if _, err := exec.LookPath("winget"); err == nil {
+			fmt.Println("Installing restic via winget...")
+			cmd = exec.Command("winget", "install", "--id", "restic.restic", "--accept-package-agreements", "--accept-source-agreements")
+		} else if _, err := exec.LookPath("choco"); err == nil {
+			fmt.Println("Installing restic via Chocolatey...")
+			cmd = exec.Command("choco", "install", "restic", "-y")
+		} else {
+			fmt.Println("No supported package manager found. Please install restic manually:")
+			fmt.Println("  winget install restic.restic")
+			return false
+		}
+	default:
+		// Linux - try different package managers
+		if _, err := exec.LookPath("apt-get"); err == nil {
+			fmt.Println("Installing restic via apt...")
+			cmd = exec.Command("sh", "-c", "sudo apt-get update && sudo apt-get install -y restic")
+		} else if _, err := exec.LookPath("yum"); err == nil {
+			fmt.Println("Installing restic via yum...")
+			cmd = exec.Command("sudo", "yum", "install", "-y", "restic")
+		} else if _, err := exec.LookPath("dnf"); err == nil {
+			fmt.Println("Installing restic via dnf...")
+			cmd = exec.Command("sudo", "dnf", "install", "-y", "restic")
+		} else if _, err := exec.LookPath("pacman"); err == nil {
+			fmt.Println("Installing restic via pacman...")
+			cmd = exec.Command("sudo", "pacman", "-S", "--noconfirm", "restic")
+		} else {
+			fmt.Println("No supported package manager found. Please install restic manually:")
+			fmt.Println("  Visit: https://restic.net")
+			return false
+		}
+	}
+
+	if cmd != nil {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("✗ Failed to install restic: %v\n", err)
+			return false
+		}
+		fmt.Println("✓ restic installed successfully")
+		return true
+	}
+
+	return false
 }
 
 func downloadFile(url, filepath string) error {
