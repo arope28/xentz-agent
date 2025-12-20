@@ -59,7 +59,8 @@ detect_platform() {
     # Special case: macOS universal binary
     if [ "$os" = "darwin" ] && [ -f "/usr/bin/lipo" ]; then
         # Check if we can use universal binary
-        echo -e "${YELLOW}Note: Universal binary available for macOS${NC}"
+        # Note: Redirect to stderr so it doesn't get captured in PLATFORM variable
+        echo -e "${YELLOW}Note: Universal binary available for macOS${NC}" >&2
         # For now, use architecture-specific, but could prefer universal
     fi
 
