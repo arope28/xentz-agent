@@ -77,3 +77,30 @@ func NewLastRunError(d time.Duration, bytes int64, msg string) LastRun {
 		Error:     msg,
 	}
 }
+
+func (s *Store) lastRetentionPath() string {
+	return filepath.Join(s.dir, "last_retention.json")
+}
+
+func (s *Store) SaveLastRetentionRun(r LastRun) error {
+	b, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(s.lastRetentionPath(), b, 0o600)
+}
+
+func (s *Store) LoadLastRetentionRun() (LastRun, bool, error) {
+	b, err := os.ReadFile(s.lastRetentionPath())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return LastRun{}, false, nil
+		}
+		return LastRun{}, false, err
+	}
+	var r LastRun
+	if err := json.Unmarshal(b, &r); err != nil {
+		return LastRun{}, false, err
+	}
+	return r, true, nil
+}
