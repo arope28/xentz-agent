@@ -265,5 +265,7 @@ echo "Next steps:"
 if ! command -v restic &> /dev/null; then
     echo "  1. Install restic if not already installed"
 fi
-echo "  2. Run: ${BINARY_NAME} install --repo <your-repo> --password <pwd> --include <paths>"
+echo "  2. Run: ${BINARY_NAME} install --token <install-token> --server <control-plane-url> --include <paths>"
+echo ""
+echo "   Or use legacy mode: ${BINARY_NAME} install --repo <your-repo> --password <pwd> --include <paths>"
 

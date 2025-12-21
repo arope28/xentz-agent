@@ -48,7 +48,8 @@ Flags (install):
   --exclude       Repeatable. Add exclude globs.
   --config        Config path override (default: ~/.xentz-agent/config.json)
 
-Note: Retention policy must be configured in config.json before running 'retention' command.
+Note: With token-based enrollment, configuration (including retention policy) is fetched from the server on each run.
+      In legacy mode, retention policy must be configured in config.json before running 'retention' command.
 `)
 }
 

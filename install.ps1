@@ -163,5 +163,7 @@ Write-Output "Next steps:"
 if (-not (Get-Command restic -ErrorAction SilentlyContinue)) {
     Write-Output "  1. Install restic if not already installed"
 }
-Write-Output "  2. Run: $BinaryName install --repo <your-repo> --password <pwd> --include <paths>"
+Write-Output "  2. Run: $BinaryName install --token <install-token> --server <control-plane-url> --include <paths>"
+Write-Output ""
+Write-Output "   Or use legacy mode: $BinaryName install --repo <your-repo> --password <pwd> --include <paths>"
 

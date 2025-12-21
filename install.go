@@ -232,7 +232,9 @@ func main() {
 	if !checkRestic() {
 		fmt.Println("  1. Install restic if not already installed")
 	}
-	fmt.Printf("  2. Run: %s install --repo <your-repo> --password <pwd> --include <paths>\n", binaryName)
+	fmt.Printf("  2. Run: %s install --token <install-token> --server <control-plane-url> --include <paths>\n", binaryName)
+	fmt.Println("")
+	fmt.Printf("   Or use legacy mode: %s install --repo <your-repo> --password <pwd> --include <paths>\n", binaryName)
 }
 
 func checkRestic() bool {
