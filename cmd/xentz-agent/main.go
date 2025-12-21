@@ -39,6 +39,12 @@ Flags (install):
   --include       Repeatable. Add include paths. Example: --include "/Users/me/Documents" --include "/Users/me/Pictures"
   --exclude       Repeatable. Add exclude globs.
   --config        Config path override (default: ~/.xentz-agent/config.json)
+  --keep_last     Number of latest snapshots to keep (default: 5)
+  --keep_daily    Number of daily snapshots to keep (default: 7)
+  --keep_weekly   Number of weekly snapshots to keep (default: 4)
+  --keep_monthly  Number of monthly snapshots to keep (default: 6)
+  --keep_yearly   Number of yearly snapshots to keep (default: 2)
+  --prune         Prune snapshots after retention policy is applied (default: false)
 
 Note: Retention policy must be configured in config.json before running 'retention' command.
 `)
@@ -188,7 +194,9 @@ func main() {
 			log.Fatalf("state init: %v", err)
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Hour)
+		// Use a shorter timeout for retention - if it takes longer than 2 hours, something is wrong
+		// The connectivity check will fail faster if the repository is unreachable
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 		defer cancel()
 
 		res := backup.RunRetention(ctx, cfg)

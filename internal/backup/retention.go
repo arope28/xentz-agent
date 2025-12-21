@@ -3,6 +3,7 @@ package backup
 import (
 	"bytes"
 	"context"
+	"os"
 	"os/exec"
 	"time"
 
@@ -22,6 +23,19 @@ func RunRetention(ctx context.Context, cfg config.Config) state.LastRun {
 	if _, err := exec.LookPath("restic"); err != nil {
 		return state.NewLastRunError(time.Since(start), 0, "restic not found in PATH")
 	}
+
+	// Check repository connectivity with a short timeout before proceeding
+	// This prevents hanging if the repository server is down
+	os.Stderr.WriteString("Checking repository connectivity...\n")
+	connectCtx, connectCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer connectCancel()
+	if err := checkRepositoryConnectivity(connectCtx, cfg); err != nil {
+		if connectCtx.Err() == context.DeadlineExceeded {
+			return state.NewLastRunError(time.Since(start), 0, "repository connection timeout: repository server appears to be unreachable or down\nCheck that the repository server is online and accessible.")
+		}
+		return state.NewLastRunError(time.Since(start), 0, "repository not reachable: "+err.Error()+"\nCheck that the repository server is online and accessible.")
+	}
+	os.Stderr.WriteString("Repository is reachable. Starting retention/prune operation...\n")
 
 	args := []string{"forget"}
 
@@ -57,9 +71,12 @@ func RunRetention(ctx context.Context, cfg config.Config) state.LastRun {
 		"RESTIC_PASSWORD_FILE="+expandHome(cfg.Restic.PasswordFile),
 	)
 
+	// Stream output to both terminal and buffer for error reporting
+	// This allows users to see progress during long-running prune operations
 	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
+	tee := &teeWriter{buf: &out, stream: true}
+	cmd.Stdout = tee
+	cmd.Stderr = tee
 
 	err := cmd.Run()
 	dur := time.Since(start)
@@ -86,3 +103,67 @@ func itoa(i int) string {
 }
 
 // expandHome and tail are defined in backup.go (same package)
+
+// checkRepositoryConnectivity verifies the repository is reachable with a quick test
+func checkRepositoryConnectivity(ctx context.Context, cfg config.Config) error {
+	// Use a quick "snapshots" command with --last 1 to test connectivity
+	// This is faster than "cat config" and will fail quickly if unreachable
+	cmd := exec.CommandContext(ctx, "restic", "snapshots", "--last", "1")
+	cmd.Env = append(cmd.Environ(),
+		"RESTIC_REPOSITORY="+cfg.Restic.Repository,
+		"RESTIC_PASSWORD_FILE="+expandHome(cfg.Restic.PasswordFile),
+	)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+
+	// This will fail quickly if the repository is unreachable
+	if err := cmd.Run(); err != nil {
+		// Check if it's a context timeout (repository unreachable)
+		if ctx.Err() == context.DeadlineExceeded {
+			return context.DeadlineExceeded
+		}
+		// For other errors (like no snapshots), that's okay - at least we connected
+		// Only return error if it looks like a connectivity issue
+		errStr := out.String()
+		if contains(errStr, "dial") || contains(errStr, "connection") || contains(errStr, "timeout") || contains(errStr, "refused") {
+			return err
+		}
+		// If it's just "no snapshots found" or similar, that's fine - repo is reachable
+	}
+	return nil
+}
+
+func contains(s, substr string) bool {
+	if len(substr) == 0 {
+		return true
+	}
+	if len(s) < len(substr) {
+		return false
+	}
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+// teeWriter writes to both a buffer and stdout for streaming output
+type teeWriter struct {
+	buf    *bytes.Buffer
+	stream bool
+}
+
+func (t *teeWriter) Write(p []byte) (n int, err error) {
+	// Write to buffer
+	n, err = t.buf.Write(p)
+	if err != nil {
+		return n, err
+	}
+	// Also write to stdout for real-time progress
+	if t.stream {
+		os.Stdout.Write(p)
+	}
+	return n, nil
+}
