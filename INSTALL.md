@@ -60,13 +60,14 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
    - For Linux: Downloads amd64, arm64, or armv7 based on your system
 
 3. **Installs to a standard location:**
-   - macOS/Linux: `~/.local/bin/xentz-agent`
-   - Windows: `%LOCALAPPDATA%\xentz-agent\xentz-agent.exe`
+   - macOS: `/usr/local/bin/xentz-agent` (requires sudo during installation)
+   - Linux: `~/.local/bin/xentz-agent` (user-specific)
+   - Windows: `%LOCALAPPDATA%\xentz-agent\xentz-agent.exe` (user-specific)
 
 4. **Provides next steps:**
    - Instructions to add to PATH (if needed)
-   - Commands to install restic
-   - Example install command
+   - Commands to install restic (if not already installed)
+   - Example install command with token-based enrollment
 
 ## Manual Installation
 
@@ -88,8 +89,21 @@ If you prefer to download manually:
    ```
 
 4. Move to a directory in your PATH, or run directly:
+   
+   **Token-based enrollment (recommended):**
    ```bash
-   ./xentz-agent-* install --repo <your-repo> --password <pwd> --include <paths>
+   ./xentz-agent-* install --token <install-token> \
+     --server https://control-plane.example.com \
+     --daily-at 02:00 \
+     --include "/path/to/backup"
+   ```
+   
+   **Legacy mode (direct repository):**
+   ```bash
+   ./xentz-agent-* install --repo rest:https://your-repo.com/backup \
+     --password "your-password" \
+     --daily-at 02:00 \
+     --include "/path/to/backup"
    ```
 
 ## Custom Installation URL
@@ -111,10 +125,16 @@ $env:XENTZ_AGENT_BASE_URL="https://your-custom-domain.com/releases"
 
 ### "Command not found" after installation
 
-The installer adds the binary to `~/.local/bin` (macOS/Linux) or `%LOCALAPPDATA%\xentz-agent` (Windows). If this directory isn't in your PATH:
+The installer adds the binary to different locations based on your OS. If the directory isn't in your PATH:
 
-**macOS/Linux:**
-Add to `~/.bashrc`, `~/.zshrc`, or `~/.profile`:
+**macOS:**
+The binary is installed to `/usr/local/bin`, which is typically already in PATH. If not, add to `~/.zshrc` or `~/.bash_profile`:
+```bash
+export PATH="/usr/local/bin:$PATH"
+```
+
+**Linux:**
+The binary is installed to `~/.local/bin`. Add to `~/.bashrc`, `~/.zshrc`, or `~/.profile`:
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
@@ -133,6 +153,10 @@ Add to your user PATH via System Settings, or run:
 
 ### Permission denied (macOS/Linux)
 
+**macOS:**
+The binary should already be executable after installation. If you get permission errors, you may need to run the installer with sudo (it will prompt you).
+
+**Linux:**
 Make sure the binary is executable:
 ```bash
 chmod +x ~/.local/bin/xentz-agent
@@ -144,4 +168,46 @@ Run PowerShell as Administrator and execute:
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
+
+## Configuration
+
+### Token-Based Enrollment (Recommended)
+
+After installation, configure the agent using token-based enrollment:
+
+```bash
+xentz-agent install --token <install-token> \
+  --server https://control-plane.example.com \
+  --daily-at 02:00 \
+  --include "/Users/yourname/Documents" \
+  --include "/Users/yourname/Pictures"
+```
+
+The agent will:
+1. Enroll with the control plane using the install token
+2. Receive server-assigned identifiers (tenant_id, device_id, device_api_key)
+3. Store the device_api_key for future authentication
+4. Set up scheduled backups
+
+### Server-Driven Configuration
+
+Once enrolled, the agent automatically:
+- Fetches configuration from the control plane on every backup/retention run
+- Uses cached configuration if the server is unreachable
+- Applies the latest settings (include paths, schedule, retention policy, etc.)
+
+You can update configuration on the control plane, and it will be applied on the next backup run automatically.
+
+### Legacy Mode (Direct Repository)
+
+If you prefer to configure the repository directly without a control plane:
+
+```bash
+xentz-agent install --repo rest:https://your-repo.com/backup \
+  --password "your-password" \
+  --daily-at 02:00 \
+  --include "/path/to/backup"
+```
+
+In legacy mode, configuration is stored locally and not fetched from a server.
 

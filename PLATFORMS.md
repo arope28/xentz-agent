@@ -72,6 +72,16 @@ The install logic automatically detects the OS at runtime using `runtime.GOOS` a
 - All file operations work identically across architectures
 - The only difference is the scheduler API (launchd vs Task Scheduler vs systemd)
 
+## Installation Directories
+
+The agent installs to different locations based on the operating system:
+
+- **macOS**: `/usr/local/bin/xentz-agent` (system-wide, requires sudo during installation)
+- **Linux**: `~/.local/bin/xentz-agent` (user-specific, XDG standard)
+- **Windows**: `%LOCALAPPDATA%\xentz-agent\xentz-agent.exe` (user-specific)
+
+**Note**: On macOS, `/usr/local/bin` is typically already in PATH. On Linux and Windows, you may need to add the installation directory to your PATH.
+
 ## Recommendations
 
 ### For Distribution
@@ -80,7 +90,7 @@ The install logic automatically detects the OS at runtime using `runtime.GOOS` a
 3. **Linux**: Provide amd64, arm64, and armv7 (covers most use cases)
 
 ### For Users
-- **Mac users**: Use the universal binary if available, or the architecture-specific one for your Mac
+- **Mac users**: Use the universal binary if available, or the architecture-specific one for your Mac. Installation requires sudo to copy to `/usr/local/bin`.
 - **Windows users**: Use amd64 unless you're on Windows 11 ARM
 - **Linux users**: Use amd64 for servers/desktops, arm64 for ARM servers, armv7 for Raspberry Pi
 

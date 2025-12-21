@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -60,6 +61,24 @@ func truncateError(errMsg string) string {
 	return truncated
 }
 
+// validateServerURL validates server URL to prevent SSRF attacks
+func validateServerURL(serverURL string) error {
+	parsed, err := url.Parse(serverURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	// Only allow http/https
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("only http/https schemes allowed")
+	}
+	// Block localhost to prevent SSRF (private IPs allowed for legitimate internal servers)
+	host := parsed.Hostname()
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return fmt.Errorf("localhost not allowed (SSRF protection)")
+	}
+	return nil
+}
+
 // SendReport sends a report to the server
 func SendReport(serverURL, deviceAPIKey string, report Report) error {
 	if serverURL == "" {
@@ -67,6 +86,11 @@ func SendReport(serverURL, deviceAPIKey string, report Report) error {
 	}
 	if deviceAPIKey == "" {
 		return fmt.Errorf("device API key is required")
+	}
+
+	// Validate server URL to prevent SSRF
+	if err := validateServerURL(serverURL); err != nil {
+		return fmt.Errorf("invalid server URL: %w", err)
 	}
 
 	// Truncate error message if present
@@ -101,10 +125,44 @@ func SendReport(serverURL, deviceAPIKey string, report Report) error {
 
 	if resp.StatusCode != http.StatusOK {
 		var errMsg bytes.Buffer
-		io.Copy(&errMsg, resp.Body)
-		return fmt.Errorf("report failed (status %d): %s", resp.StatusCode, errMsg.String())
+		// Limit error message to prevent information leakage
+		io.CopyN(&errMsg, resp.Body, 512) // Limit to 512 bytes
+		errStr := strings.TrimSpace(errMsg.String())
+		// Remove newlines and limit length
+		errStr = strings.ReplaceAll(errStr, "\n", " ")
+		errStr = strings.ReplaceAll(errStr, "\r", " ")
+		if len(errStr) > 256 {
+			errStr = errStr[:256] + "..."
+		}
+		return fmt.Errorf("report failed (status %d): %s", resp.StatusCode, errStr)
 	}
 
+	return nil
+}
+
+// checkSpoolSize checks if spool directory is within size limits
+func checkSpoolSize() error {
+	spoolDir, err := getSpoolDir()
+	if err != nil {
+		return err
+	}
+	var totalSize int64
+	entries, err := os.ReadDir(spoolDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // Directory doesn't exist yet, that's fine
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if info, err := entry.Info(); err == nil {
+			totalSize += info.Size()
+		}
+	}
+	const maxSpoolSize = 100 * 1024 * 1024 // 100MB
+	if totalSize > maxSpoolSize {
+		return fmt.Errorf("spool directory too large: %d bytes (max %d bytes)", totalSize, maxSpoolSize)
+	}
 	return nil
 }
 
@@ -119,14 +177,35 @@ func SpoolReport(report Report) error {
 		return fmt.Errorf("create spool dir: %w", err)
 	}
 
+	// Check spool size before writing
+	if err := checkSpoolSize(); err != nil {
+		return fmt.Errorf("spool size check failed: %w", err)
+	}
+
 	// Truncate error message if present
 	if report.Error != "" {
 		report.Error = truncateError(report.Error)
 	}
 
+	// Sanitize job and status to prevent path injection
+	sanitize := func(s string) string {
+		// Remove any path separators and dangerous characters
+		s = strings.ReplaceAll(s, "/", "_")
+		s = strings.ReplaceAll(s, "\\", "_")
+		s = strings.ReplaceAll(s, "..", "_")
+		s = strings.ReplaceAll(s, string(filepath.Separator), "_")
+		// Remove any other potentially dangerous characters
+		s = strings.ReplaceAll(s, "\x00", "_")
+		// Limit length
+		if len(s) > 50 {
+			s = s[:50]
+		}
+		return s
+	}
+
 	// Generate filename: {unix_timestamp}-{job}-{status}.json
 	timestamp := time.Now().Unix()
-	filename := fmt.Sprintf("%d-%s-%s.json", timestamp, report.Job, report.Status)
+	filename := fmt.Sprintf("%d-%s-%s.json", timestamp, sanitize(report.Job), sanitize(report.Status))
 	filepath := filepath.Join(spoolDir, filename)
 
 	jsonData, err := json.MarshalIndent(report, "", "  ")
@@ -217,12 +296,34 @@ func LoadPendingReports(maxCount int) ([]Report, []string, error) {
 
 // DeleteSpooledReport deletes a spooled report file
 func DeleteSpooledReport(filename string) error {
+	// Validate filename - must be simple filename, no path separators
+	if strings.Contains(filename, "/") || strings.Contains(filename, "\\") ||
+		strings.Contains(filename, "..") || filepath.IsAbs(filename) {
+		return fmt.Errorf("invalid filename: %s", filename)
+	}
+	// Ensure it's a JSON file
+	if !strings.HasSuffix(filename, ".json") {
+		return fmt.Errorf("invalid filename: must be .json file")
+	}
+
 	spoolDir, err := getSpoolDir()
 	if err != nil {
 		return fmt.Errorf("get spool dir: %w", err)
 	}
 
 	filepath := filepath.Join(spoolDir, filename)
+	// Double-check the resolved path is within spoolDir
+	resolved, err := filepath.EvalSymlinks(filepath)
+	if err == nil {
+		spoolResolved, err2 := filepath.EvalSymlinks(spoolDir)
+		if err2 == nil {
+			spoolResolvedWithSep := spoolResolved + string(filepath.Separator)
+			if !strings.HasPrefix(resolved, spoolResolvedWithSep) && resolved != spoolResolved {
+				return fmt.Errorf("path traversal detected")
+			}
+		}
+	}
+
 	if err := os.Remove(filepath); err != nil {
 		return fmt.Errorf("delete spool file: %w", err)
 	}
@@ -303,6 +404,11 @@ func SendPendingReports(serverURL, deviceAPIKey string, maxCount int) error {
 
 	successCount := 0
 	for i, report := range reports {
+		// Rate limit: wait 100ms between reports to avoid flooding server
+		if i > 0 {
+			time.Sleep(100 * time.Millisecond)
+		}
+
 		err := SendReport(serverURL, deviceAPIKey, report)
 		if err != nil {
 			log.Printf("warning: failed to send pending report %s/%s: %v", report.Job, report.Status, err)

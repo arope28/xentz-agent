@@ -119,10 +119,14 @@ GOOS=linux GOARCH=amd64 go build -o xentz-agent ./cmd/xentz-agent
 
 ## Architecture
 
-- **Token-based enrollment**: Agents receive an install token from the control plane and enroll to get server-assigned tenant_id, device_id, and repository URL.
+- **Token-based enrollment**: Agents receive an install token from the control plane and enroll to get server-assigned tenant_id, device_id, device_api_key, and repository URL.
+- **Server-driven configuration**: The agent fetches configuration from the control plane on every backup/retention run, ensuring settings are always up-to-date.
+- **Local caching**: Config is cached locally and used as fallback if the server is unreachable.
 - **Device-scoped repos**: Each device gets a unique device_id from the server.
 - **User-scoped data**: Each user on a device backs up to their own repository path: `{base}/{tenant_id}/{device_id}/{user_id}/`
 - **Multi-user support**: Multiple users can enroll on the same device, each with their own repository.
+- **Automatic reporting**: Backup and retention runs are automatically reported to the control plane with detailed metrics (files processed, bytes, duration, etc.).
+- **Reliable delivery**: Failed reports are spooled locally and retried on subsequent runs.
 
 ## Notes
 
@@ -130,4 +134,10 @@ GOOS=linux GOARCH=amd64 go build -o xentz-agent ./cmd/xentz-agent
 - **Linux ARMv7**: Included for compatibility with older ARM devices like Raspberry Pi.
 - **Windows on ARM**: Full support for Windows 11 on ARM devices.
 - The `install` command automatically detects your OS and uses the appropriate scheduler.
-- **Enrollment**: The agent calls `POST /v1/install` on the control plane with the install token and device metadata to receive server-issued identifiers.
+- **Installation directories**:
+  - macOS: `/usr/local/bin` (requires sudo during installation)
+  - Linux: `~/.local/bin` (user-specific)
+  - Windows: `%LOCALAPPDATA%\xentz-agent\` (user-specific)
+- **Enrollment**: The agent calls `POST /v1/install` on the control plane with the install token and device metadata to receive server-issued identifiers (tenant_id, device_id, device_api_key).
+- **Config fetching**: The agent calls `GET /v1/config` on every backup/retention run using the device_api_key to fetch the latest configuration.
+- **Reporting**: The agent sends backup and retention metrics to `POST /v1/report` after each run, with automatic retry for failed reports.

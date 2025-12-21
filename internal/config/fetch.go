@@ -4,10 +4,31 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
+
+// validateServerURL validates server URL to prevent SSRF attacks
+func validateServerURL(serverURL string) error {
+	parsed, err := url.Parse(serverURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	// Only allow http/https
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("only http/https schemes allowed")
+	}
+	// Block localhost to prevent SSRF (private IPs allowed for legitimate internal servers)
+	host := parsed.Hostname()
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return fmt.Errorf("localhost not allowed (SSRF protection)")
+	}
+	return nil
+}
 
 // FetchFromServer fetches configuration from the server using the device API key
 func FetchFromServer(serverURL, deviceAPIKey string) (Config, error) {
@@ -16,6 +37,11 @@ func FetchFromServer(serverURL, deviceAPIKey string) (Config, error) {
 	}
 	if deviceAPIKey == "" {
 		return Config{}, fmt.Errorf("device API key is required")
+	}
+
+	// Validate server URL to prevent SSRF
+	if err := validateServerURL(serverURL); err != nil {
+		return Config{}, fmt.Errorf("invalid server URL: %w", err)
 	}
 
 	// Make GET request to /v1/config
@@ -46,8 +72,16 @@ func FetchFromServer(serverURL, deviceAPIKey string) (Config, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		var errMsg bytes.Buffer
-		errMsg.ReadFrom(resp.Body)
-		return Config{}, fmt.Errorf("config fetch failed (status %d): %s", resp.StatusCode, errMsg.String())
+		// Limit error message to prevent information leakage
+		io.CopyN(&errMsg, resp.Body, 512) // Limit to 512 bytes
+		errStr := strings.TrimSpace(errMsg.String())
+		// Remove newlines and limit length
+		errStr = strings.ReplaceAll(errStr, "\n", " ")
+		errStr = strings.ReplaceAll(errStr, "\r", " ")
+		if len(errStr) > 256 {
+			errStr = errStr[:256] + "..."
+		}
+		return Config{}, fmt.Errorf("config fetch failed (status %d): %s", resp.StatusCode, errStr)
 	}
 
 	// Parse response
@@ -62,6 +96,36 @@ func FetchFromServer(serverURL, deviceAPIKey string) (Config, error) {
 	}
 	if cfg.Restic.Repository == "" {
 		return Config{}, fmt.Errorf("server config missing required field: restic.repository")
+	}
+
+	// Validate config values to prevent malicious input
+	if len(cfg.Include) > 1000 {
+		return Config{}, fmt.Errorf("too many include paths (max 1000)")
+	}
+	if len(cfg.Exclude) > 1000 {
+		return Config{}, fmt.Errorf("too many exclude paths (max 1000)")
+	}
+
+	// Validate paths
+	validatePath := func(path string) error {
+		if len(path) == 0 || len(path) > 4096 {
+			return fmt.Errorf("path length invalid")
+		}
+		if strings.Contains(path, "\x00") {
+			return fmt.Errorf("path contains null byte")
+		}
+		return nil
+	}
+
+	for i, path := range cfg.Include {
+		if err := validatePath(path); err != nil {
+			return Config{}, fmt.Errorf("invalid include path at index %d: %w", i, err)
+		}
+	}
+	for i, path := range cfg.Exclude {
+		if err := validatePath(path); err != nil {
+			return Config{}, fmt.Errorf("invalid exclude path at index %d: %w", i, err)
+		}
 	}
 
 	return cfg, nil
