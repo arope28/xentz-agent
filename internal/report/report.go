@@ -206,14 +206,14 @@ func SpoolReport(report Report) error {
 	// Generate filename: {unix_timestamp}-{job}-{status}.json
 	timestamp := time.Now().Unix()
 	filename := fmt.Sprintf("%d-%s-%s.json", timestamp, sanitize(report.Job), sanitize(report.Status))
-	filepath := filepath.Join(spoolDir, filename)
+	targetPath := filepath.Join(spoolDir, filename)
 
 	jsonData, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal report: %w", err)
 	}
 
-	if err := os.WriteFile(filepath, jsonData, 0o600); err != nil {
+	if err := os.WriteFile(targetPath, jsonData, 0o600); err != nil {
 		return fmt.Errorf("write spool file: %w", err)
 	}
 
@@ -274,8 +274,8 @@ func LoadPendingReports(maxCount int) ([]Report, []string, error) {
 	var reports []Report
 	var filenames []string
 	for _, filename := range files {
-		filepath := filepath.Join(spoolDir, filename)
-		data, err := os.ReadFile(filepath)
+		targetPath := filepath.Join(spoolDir, filename)
+		data, err := os.ReadFile(targetPath)
 		if err != nil {
 			log.Printf("warning: failed to read spooled report %s: %v", filename, err)
 			continue
@@ -311,9 +311,9 @@ func DeleteSpooledReport(filename string) error {
 		return fmt.Errorf("get spool dir: %w", err)
 	}
 
-	filepath := filepath.Join(spoolDir, filename)
+	targetPath := filepath.Join(spoolDir, filename)
 	// Double-check the resolved path is within spoolDir
-	resolved, err := filepath.EvalSymlinks(filepath)
+	resolved, err := filepath.EvalSymlinks(targetPath)
 	if err == nil {
 		spoolResolved, err2 := filepath.EvalSymlinks(spoolDir)
 		if err2 == nil {
@@ -324,7 +324,7 @@ func DeleteSpooledReport(filename string) error {
 		}
 	}
 
-	if err := os.Remove(filepath); err != nil {
+	if err := os.Remove(targetPath); err != nil {
 		return fmt.Errorf("delete spool file: %w", err)
 	}
 
@@ -368,8 +368,8 @@ func CleanupOldReports(maxAge time.Duration) error {
 
 		fileTime := time.Unix(timestamp, 0)
 		if fileTime.Before(cutoff) {
-			filepath := filepath.Join(spoolDir, entry.Name())
-			if err := os.Remove(filepath); err != nil {
+			targetPath := filepath.Join(spoolDir, entry.Name())
+			if err := os.Remove(targetPath); err != nil {
 				log.Printf("warning: failed to delete old report %s: %v", entry.Name(), err)
 			} else {
 				deleted++
