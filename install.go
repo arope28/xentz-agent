@@ -118,24 +118,28 @@ func main() {
 	if osName == "windows" {
 		installDir = filepath.Join(os.Getenv("LOCALAPPDATA"), "xentz-agent")
 	} else if osName == "darwin" {
-		// macOS: use ~/bin (more common on macOS)
-		installDir = filepath.Join(home, "bin")
+		// macOS: use /usr/local/bin (system-wide, requires sudo)
+		installDir = "/usr/local/bin"
 	} else {
 		// Linux: use ~/.local/bin (XDG standard)
 		installDir = filepath.Join(home, ".local", "bin")
 	}
 
-	// Create install directory
-	if err := os.MkdirAll(installDir, 0o755); err != nil {
-		fmt.Printf("Error creating install directory: %v\n", err)
+	binaryPath := filepath.Join(installDir, binaryName)
+
+	// Download to temporary location first
+	tempFile, err := os.CreateTemp("", "xentz-agent-*")
+	if err != nil {
+		fmt.Printf("Error creating temp file: %v\n", err)
 		os.Exit(1)
 	}
-
-	binaryPath := filepath.Join(installDir, binaryName)
+	tempPath := tempFile.Name()
+	tempFile.Close()
+	defer os.Remove(tempPath)
 
 	// Download binary
 	fmt.Println("Downloading xentz-agent...")
-	if err := downloadFile(downloadURL, binaryPath); err != nil {
+	if err := downloadFile(downloadURL, tempPath); err != nil {
 		fmt.Printf("Error downloading binary: %v\n", err)
 		fmt.Printf("Please check that the release exists at: %s\n", downloadURL)
 		os.Exit(1)
@@ -143,6 +147,52 @@ func main() {
 
 	// Make executable (Unix-like systems)
 	if osName != "windows" {
+		if err := os.Chmod(tempPath, 0o755); err != nil {
+			fmt.Printf("Error making binary executable: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	// Copy to install directory (use sudo for macOS system directory)
+	if osName == "darwin" {
+		fmt.Printf("Installing to %s (requires sudo)...\n", installDir)
+		// Use sudo to copy the file
+		cmd := exec.Command("sudo", "cp", tempPath, binaryPath)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("Error: Failed to install binary to %s\n", installDir)
+			os.Exit(1)
+		}
+		// Set executable permissions
+		cmd = exec.Command("sudo", "chmod", "+x", binaryPath)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("Error: Failed to set executable permissions\n")
+			os.Exit(1)
+		}
+	} else if osName == "windows" {
+		// Windows: create directory if needed and copy
+		if err := os.MkdirAll(installDir, 0o755); err != nil {
+			fmt.Printf("Error creating install directory: %v\n", err)
+			os.Exit(1)
+		}
+		if err := copyFile(tempPath, binaryPath); err != nil {
+			fmt.Printf("Error: Failed to install binary to %s\n", installDir)
+			os.Exit(1)
+		}
+	} else {
+		// Linux: create directory if needed and copy
+		if err := os.MkdirAll(installDir, 0o755); err != nil {
+			fmt.Printf("Error creating install directory: %v\n", err)
+			os.Exit(1)
+		}
+		if err := copyFile(tempPath, binaryPath); err != nil {
+			fmt.Printf("Error: Failed to install binary to %s\n", installDir)
+			os.Exit(1)
+		}
 		if err := os.Chmod(binaryPath, 0o755); err != nil {
 			fmt.Printf("Error making binary executable: %v\n", err)
 			os.Exit(1)
@@ -162,8 +212,9 @@ func main() {
 			fmt.Println("Add it to your PATH:")
 			fmt.Printf("  [Environment]::SetEnvironmentVariable('Path', \"$env:Path;%s\", 'User')\n", installDir)
 		} else if osName == "darwin" {
-			fmt.Println("Add this to your ~/.zshrc or ~/.bash_profile:")
-			fmt.Printf("  export PATH=\"%s:$PATH\"\n", installDir)
+			fmt.Println("/usr/local/bin is typically already in PATH on macOS.")
+			fmt.Println("If not, add this to your ~/.zshrc or ~/.bash_profile:")
+			fmt.Printf("  export PATH=\"/usr/local/bin:$PATH\"\n")
 		} else {
 			fmt.Println("Add this to your ~/.bashrc, ~/.zshrc, or ~/.profile:")
 			fmt.Printf("  export PATH=\"%s:$PATH\"\n", installDir)
@@ -282,5 +333,22 @@ func checkURLExists(url string) bool {
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
+}
+
+func copyFile(src, dst string) error {
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destFile.Close()
+
+	_, err = io.Copy(destFile, sourceFile)
+	return err
 }
 

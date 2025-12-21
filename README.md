@@ -48,6 +48,16 @@ irm https://github.com/arope28/xentz-agent/releases/latest/download/install.ps1 
 2. **Download the appropriate binary** for your platform from the [releases page](https://github.com/arope28/xentz-agent/releases).
 
 3. **Install and configure**:
+   
+   **Token-based enrollment (recommended):**
+   ```bash
+   ./xentz-agent install --token <install-token> \
+     --server https://control-plane.example.com \
+     --daily-at 02:00 \
+     --include "/Users/yourname/Documents"
+   ```
+   
+   **Legacy mode (direct repository):**
    ```bash
    ./xentz-agent install --repo rest:https://your-repo.com/backup \
      --password "your-password" \
@@ -58,11 +68,17 @@ irm https://github.com/arope28/xentz-agent/releases/latest/download/install.ps1 
 ## Commands
 
 ```bash
-# Install the agent and schedule daily backups
+# Install the agent with token-based enrollment (recommended)
+xentz-agent install --token <install-token> --server <control-plane-url> --include <paths>
+
+# Or use legacy mode with direct repository
 xentz-agent install --repo <url> --password <pwd> --include <paths>
 
 # Run a backup manually
 xentz-agent backup
+
+# Run retention/prune policy
+xentz-agent retention
 
 # Check the status of the last backup
 xentz-agent status
@@ -101,9 +117,17 @@ GOOS=windows GOARCH=amd64 go build -o xentz-agent.exe ./cmd/xentz-agent
 GOOS=linux GOARCH=amd64 go build -o xentz-agent ./cmd/xentz-agent
 ```
 
+## Architecture
+
+- **Token-based enrollment**: Agents receive an install token from the control plane and enroll to get server-assigned tenant_id, device_id, and repository URL.
+- **Device-scoped repos**: Each device gets a unique device_id from the server.
+- **User-scoped data**: Each user on a device backs up to their own repository path: `{base}/{tenant_id}/{device_id}/{user_id}/`
+- **Multi-user support**: Multiple users can enroll on the same device, each with their own repository.
+
 ## Notes
 
 - **macOS ARM64 vs Intel**: No code changes needed! The same code works on both architectures. Just build separate binaries or use a universal binary (created automatically by `build.sh` on macOS).
 - **Linux ARMv7**: Included for compatibility with older ARM devices like Raspberry Pi.
 - **Windows on ARM**: Full support for Windows 11 on ARM devices.
 - The `install` command automatically detects your OS and uses the appropriate scheduler.
+- **Enrollment**: The agent calls `POST /v1/install` on the control plane with the install token and device metadata to receive server-issued identifiers.

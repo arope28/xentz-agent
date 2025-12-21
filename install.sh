@@ -72,7 +72,7 @@ ARCH=$(echo $PLATFORM | cut -d'-' -f2)
 
 # Set install directory based on OS
 if [ "$OS" = "darwin" ]; then
-    INSTALL_DIR="${HOME}/bin"
+    INSTALL_DIR="/usr/local/bin"
 else
     # Linux - use XDG standard
     INSTALL_DIR="${HOME}/.local/bin"
@@ -204,19 +204,37 @@ DOWNLOAD_URL="${BASE_URL}/${BINARY_FILE}"
 echo "Downloading from: $DOWNLOAD_URL"
 echo ""
 
-# Create install directory
-mkdir -p "$INSTALL_DIR"
+# Download to temporary location first
+TEMP_BINARY=$(mktemp)
+trap "rm -f $TEMP_BINARY" EXIT
 
-# Download binary
 echo "Downloading xentz-agent..."
-if ! curl -fsSL -o "${INSTALL_DIR}/${BINARY_NAME}" "$DOWNLOAD_URL"; then
+if ! curl -fsSL -o "$TEMP_BINARY" "$DOWNLOAD_URL"; then
     echo -e "${RED}Error: Failed to download binary${NC}"
     echo "Please check that the release exists at: $DOWNLOAD_URL"
     exit 1
 fi
 
 # Make executable
-chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
+chmod +x "$TEMP_BINARY"
+
+# Copy to install directory (use sudo for macOS system directory)
+if [ "$OS" = "darwin" ]; then
+    echo "Installing to ${INSTALL_DIR} (requires sudo)..."
+    if ! sudo cp "$TEMP_BINARY" "${INSTALL_DIR}/${BINARY_NAME}"; then
+        echo -e "${RED}Error: Failed to install binary to ${INSTALL_DIR}${NC}"
+        exit 1
+    fi
+    sudo chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
+else
+    # Linux - create directory if needed and copy
+    mkdir -p "$INSTALL_DIR"
+    if ! cp "$TEMP_BINARY" "${INSTALL_DIR}/${BINARY_NAME}"; then
+        echo -e "${RED}Error: Failed to install binary to ${INSTALL_DIR}${NC}"
+        exit 1
+    fi
+    chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
+fi
 
 echo -e "${GREEN}✓ Installation complete!${NC}"
 echo ""
@@ -227,8 +245,9 @@ echo ""
 if [[ ":$PATH:" != *":${INSTALL_DIR}:"* ]]; then
     echo -e "${YELLOW}Note: ${INSTALL_DIR} is not in your PATH${NC}"
     if [ "$OS" = "darwin" ]; then
-        echo "Add this to your ~/.zshrc or ~/.bash_profile:"
-        echo "  export PATH=\"\${HOME}/bin:\$PATH\""
+        echo "/usr/local/bin is typically already in PATH on macOS."
+        echo "If not, add this to your ~/.zshrc or ~/.bash_profile:"
+        echo "  export PATH=\"/usr/local/bin:\$PATH\""
     else
         echo "Add this to your ~/.bashrc, ~/.zshrc, or ~/.profile:"
         echo "  export PATH=\"\${HOME}/.local/bin:\$PATH\""

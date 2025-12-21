@@ -27,7 +27,15 @@ type Retention struct {
 }
 
 type Config struct {
-	ServerURL string   `json:"server_url,omitempty"`
+	// Enrollment fields (server-issued identifiers)
+	InstallToken string `json:"install_token,omitempty"` // Temporary token for enrollment (not stored after enrollment)
+	TenantID     string `json:"tenant_id,omitempty"`     // Server-assigned tenant/customer ID
+	DeviceID     string `json:"device_id,omitempty"`     // Server-assigned device identifier
+	DeviceAPIKey string `json:"device_api_key,omitempty"` // Long-lived API key for fetching config
+	UserID       string `json:"user_id,omitempty"`       // User identifier (username or UUID)
+
+	// Control plane and scheduling
+	ServerURL string   `json:"server_url,omitempty"` // Base URL for control plane
 	Schedule  Schedule `json:"schedule"`
 	Include   []string `json:"include"`
 	Exclude   []string `json:"exclude,omitempty"`
@@ -72,4 +80,31 @@ func Read(path string) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// GetCachedConfigPath returns the path for the cached config file
+func GetCachedConfigPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".xentz-agent", "config-cached.json"), nil
+}
+
+// WriteCached writes the config to the cached config file
+func WriteCached(cfg Config) error {
+	cachePath, err := GetCachedConfigPath()
+	if err != nil {
+		return err
+	}
+	return Write(cachePath, cfg)
+}
+
+// ReadCached reads the cached config file
+func ReadCached() (Config, error) {
+	cachePath, err := GetCachedConfigPath()
+	if err != nil {
+		return Config{}, err
+	}
+	return Read(cachePath)
 }
