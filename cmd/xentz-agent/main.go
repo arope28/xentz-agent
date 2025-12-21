@@ -13,6 +13,7 @@ import (
 	"xentz-agent/internal/config"
 	"xentz-agent/internal/enroll"
 	"xentz-agent/internal/install"
+	"xentz-agent/internal/report"
 	"xentz-agent/internal/state"
 )
 
@@ -287,12 +288,49 @@ func main() {
 			log.Fatalf("state init: %v", err)
 		}
 
+		// Track start time for reporting
+		startTime := time.Now()
+
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
 		defer cancel()
 
 		res := backup.Run(ctx, cfg)
 		if err := st.SaveLastRun(res); err != nil {
 			log.Printf("save last run: %v", err)
+		}
+
+		// Send reports (non-blocking)
+		if localCfg.DeviceID != "" && localCfg.DeviceAPIKey != "" && localCfg.ServerURL != "" {
+			// Send pending reports first (max 20, oldest first)
+			_ = report.SendPendingReports(localCfg.ServerURL, localCfg.DeviceAPIKey, 20)
+
+			// Create report for current run
+			finishedTime := time.Now()
+			reportStatus := "success"
+			if res.Status == "error" {
+				reportStatus = "failure"
+			}
+			backupReport := report.Report{
+				DeviceID:      localCfg.DeviceID,
+				Job:           "backup",
+				StartedAt:     startTime.UTC().Format(time.RFC3339),
+				FinishedAt:    finishedTime.UTC().Format(time.RFC3339),
+				Status:        reportStatus,
+				DurationMS:    res.DurationMS,
+				FilesTotal:    res.FilesTotal,
+				BytesTotal:    res.BytesTotal,
+				DataAddedBytes: res.DataAddedBytes,
+				SnapshotID:    res.SnapshotID,
+			}
+			if res.Error != "" {
+				backupReport.Error = res.Error
+			}
+
+			// Send current report (spools if it fails)
+			_ = report.SendReportWithSpool(localCfg.ServerURL, localCfg.DeviceAPIKey, backupReport)
+
+			// Cleanup old reports periodically (every run for simplicity in MVP)
+			_ = report.CleanupOldReports(30 * 24 * time.Hour)
 		}
 
 		if res.Status != "success" {
@@ -348,6 +386,9 @@ func main() {
 			log.Fatalf("state init: %v", err)
 		}
 
+		// Track start time for reporting
+		startTime := time.Now()
+
 		// Use a shorter timeout for retention - if it takes longer than 2 hours, something is wrong
 		// The connectivity check will fail faster if the repository is unreachable
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
@@ -357,6 +398,37 @@ func main() {
 		if err := st.SaveLastRetentionRun(res); err != nil {
 			log.Printf("save last retention run: %v", err)
 		}
+
+		// Send reports (non-blocking)
+		if localCfg.DeviceID != "" && localCfg.DeviceAPIKey != "" && localCfg.ServerURL != "" {
+			// Send pending reports first (max 20, oldest first)
+			_ = report.SendPendingReports(localCfg.ServerURL, localCfg.DeviceAPIKey, 20)
+
+			// Create report for current run (simpler payload, no file/byte stats)
+			finishedTime := time.Now()
+			reportStatus := "success"
+			if res.Status == "error" {
+				reportStatus = "failure"
+			}
+			retentionReport := report.Report{
+				DeviceID:   localCfg.DeviceID,
+				Job:        "retention",
+				StartedAt:  startTime.UTC().Format(time.RFC3339),
+				FinishedAt: finishedTime.UTC().Format(time.RFC3339),
+				Status:     reportStatus,
+				DurationMS: res.DurationMS,
+			}
+			if res.Error != "" {
+				retentionReport.Error = res.Error
+			}
+
+			// Send current report (spools if it fails)
+			_ = report.SendReportWithSpool(localCfg.ServerURL, localCfg.DeviceAPIKey, retentionReport)
+
+			// Cleanup old reports periodically
+			_ = report.CleanupOldReports(30 * 24 * time.Hour)
+		}
+
 		if res.Status != "success" {
 			log.Printf("retention failed ❌: %s", res.Error)
 			os.Exit(1)

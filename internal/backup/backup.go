@@ -1,8 +1,10 @@
 package backup
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -35,7 +37,7 @@ func Run(ctx context.Context, cfg config.Config) state.LastRun {
 		return state.NewLastRunError(time.Since(start), 0, "repo init check failed: "+err.Error())
 	}
 
-	args := []string{"backup"}
+	args := []string{"backup", "--json"}
 	for _, ex := range cfg.Exclude {
 		args = append(args, "--exclude", ex)
 	}
@@ -49,8 +51,9 @@ func Run(ctx context.Context, cfg config.Config) state.LastRun {
 	)
 
 	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
+	var jsonOut bytes.Buffer
+	cmd.Stderr = &out // Errors go to stderr
+	cmd.Stdout = &jsonOut // JSON output goes to stdout
 
 	err := cmd.Run()
 	dur := time.Since(start)
@@ -61,7 +64,20 @@ func Run(ctx context.Context, cfg config.Config) state.LastRun {
 		return state.NewLastRunError(dur, 0, "restic backup failed: "+err.Error()+"\n"+msg)
 	}
 
-	return state.NewLastRunSuccess(dur, 0) // bytes_sent can be parsed later (or from restic --json)
+	// Parse JSON output to extract stats
+	stats := parseResticJSON(jsonOut.Bytes())
+	if stats != nil {
+		return state.NewLastRunSuccessWithStats(
+			dur,
+			stats.FilesTotal,
+			stats.BytesTotal,
+			stats.DataAddedBytes,
+			stats.SnapshotID,
+		)
+	}
+
+	// Fallback to basic success if JSON parsing fails
+	return state.NewLastRunSuccess(dur, 0)
 }
 
 func ensureRepoInitialized(ctx context.Context, cfg config.Config) error {
@@ -105,4 +121,90 @@ func tail(s string, max int) string {
 		return s
 	}
 	return s[len(s)-max:]
+}
+
+// resticStats contains parsed statistics from restic JSON output
+type resticStats struct {
+	FilesTotal     int64
+	BytesTotal     int64
+	DataAddedBytes int64
+	SnapshotID     string
+}
+
+// parseResticJSON parses restic JSON output and extracts summary statistics
+func parseResticJSON(data []byte) *resticStats {
+	// Restic outputs JSON objects, one per line
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	var summary map[string]interface{}
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+
+		var msg map[string]interface{}
+		if err := json.Unmarshal(line, &msg); err != nil {
+			continue
+		}
+
+		// Look for summary message
+		if msgType, ok := msg["message_type"].(string); ok && msgType == "summary" {
+			summary = msg
+			break
+		}
+	}
+
+	if summary == nil {
+		return nil
+	}
+
+	stats := &resticStats{}
+
+	// Extract files_total (sum of files_new, files_changed, files_unmodified)
+	if filesNew, ok := getFloat64(summary, "files_new"); ok {
+		stats.FilesTotal += int64(filesNew)
+	}
+	if filesChanged, ok := getFloat64(summary, "files_changed"); ok {
+		stats.FilesTotal += int64(filesChanged)
+	}
+	if filesUnmodified, ok := getFloat64(summary, "files_unmodified"); ok {
+		stats.FilesTotal += int64(filesUnmodified)
+	}
+
+	// Extract bytes_total (total_bytes_processed)
+	if bytesTotal, ok := getFloat64(summary, "total_bytes_processed"); ok {
+		stats.BytesTotal = int64(bytesTotal)
+	}
+
+	// Extract data_added_bytes (bytes_added, not bytes_added_packed)
+	if bytesAdded, ok := getFloat64(summary, "bytes_added"); ok {
+		stats.DataAddedBytes = int64(bytesAdded)
+	}
+
+	// Extract snapshot_id
+	if snapshotID, ok := summary["snapshot_id"].(string); ok {
+		stats.SnapshotID = snapshotID
+	}
+
+	return stats
+}
+
+// getFloat64 safely extracts a float64 from a map, handling both float64 and int types
+func getFloat64(m map[string]interface{}, key string) (float64, bool) {
+	val, ok := m[key]
+	if !ok {
+		return 0, false
+	}
+
+	switch v := val.(type) {
+	case float64:
+		return v, true
+	case int:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	default:
+		return 0, false
+	}
 }

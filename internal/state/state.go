@@ -9,11 +9,16 @@ import (
 )
 
 type LastRun struct {
-	Status    string `json:"status"` // success|error
-	TimeUTC   string `json:"time_utc"`
-	Duration  string `json:"duration"`
-	BytesSent int64  `json:"bytes_sent"`
-	Error     string `json:"error,omitempty"`
+	Status        string `json:"status"` // success|error
+	TimeUTC       string `json:"time_utc"`
+	Duration      string `json:"duration"`
+	DurationMS    int64  `json:"duration_ms,omitempty"`    // Duration in milliseconds
+	BytesSent     int64  `json:"bytes_sent"`
+	FilesTotal    int64  `json:"files_total,omitempty"`    // Total files processed
+	BytesTotal    int64  `json:"bytes_total,omitempty"`    // Total bytes processed (logical size)
+	DataAddedBytes int64 `json:"data_added_bytes,omitempty"` // Data actually added/uploaded
+	SnapshotID    string `json:"snapshot_id,omitempty"`     // Restic snapshot ID
+	Error         string `json:"error,omitempty"`
 }
 
 type Store struct {
@@ -61,10 +66,25 @@ func (s *Store) LoadLastRun() (LastRun, bool, error) {
 
 func NewLastRunSuccess(d time.Duration, bytes int64) LastRun {
 	return LastRun{
-		Status:    "success",
-		TimeUTC:   time.Now().UTC().Format(time.RFC3339),
-		Duration:  d.String(),
-		BytesSent: bytes,
+		Status:     "success",
+		TimeUTC:    time.Now().UTC().Format(time.RFC3339),
+		Duration:   d.String(),
+		DurationMS: d.Milliseconds(),
+		BytesSent:  bytes,
+	}
+}
+
+func NewLastRunSuccessWithStats(d time.Duration, filesTotal, bytesTotal, dataAddedBytes int64, snapshotID string) LastRun {
+	return LastRun{
+		Status:         "success",
+		TimeUTC:        time.Now().UTC().Format(time.RFC3339),
+		Duration:       d.String(),
+		DurationMS:     d.Milliseconds(),
+		FilesTotal:     filesTotal,
+		BytesTotal:     bytesTotal,
+		DataAddedBytes: dataAddedBytes,
+		SnapshotID:     snapshotID,
+		BytesSent:      dataAddedBytes, // For backward compatibility
 	}
 }
 
@@ -73,6 +93,7 @@ func NewLastRunError(d time.Duration, bytes int64, msg string) LastRun {
 		Status:    "error",
 		TimeUTC:   time.Now().UTC().Format(time.RFC3339),
 		Duration:  d.String(),
+		DurationMS: d.Milliseconds(),
 		BytesSent: bytes,
 		Error:     msg,
 	}
