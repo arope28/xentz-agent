@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -52,7 +53,7 @@ func Run(ctx context.Context, cfg config.Config) state.LastRun {
 
 	var out bytes.Buffer
 	var jsonOut bytes.Buffer
-	cmd.Stderr = &out // Errors go to stderr
+	cmd.Stderr = &out     // Errors go to stderr
 	cmd.Stdout = &jsonOut // JSON output goes to stdout
 
 	err := cmd.Run()
@@ -102,7 +103,8 @@ func ensureRepoInitialized(ctx context.Context, cfg config.Config) error {
 	initCmd.Stdout = &out
 	initCmd.Stderr = &out
 	if err := initCmd.Run(); err != nil {
-		return err
+		// Include error output for debugging
+		return fmt.Errorf("%v: %s", err, out.String())
 	}
 	return nil
 }
