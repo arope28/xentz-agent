@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -14,7 +16,7 @@ import (
 	"xentz-agent/internal/state"
 )
 
-func Run(ctx context.Context, cfg config.Config) state.LastRun {
+func Run(ctx context.Context, cfg config.Config, autoInit bool) state.LastRun {
 	start := time.Now()
 
 	if len(cfg.Include) == 0 {
@@ -32,8 +34,9 @@ func Run(ctx context.Context, cfg config.Config) state.LastRun {
 		return state.NewLastRunError(time.Since(start), 0, "restic not found in PATH (install restic first)")
 	}
 
-	// Optional: auto-init repo if needed (safe-ish for MVP; you can gate behind a flag later)
-	if err := ensureRepoInitialized(ctx, cfg); err != nil {
+	// Check if repository exists and is initialized
+	// Only auto-init if explicitly enabled (prevents accidental repo creation)
+	if err := checkOrInitRepo(ctx, cfg, autoInit); err != nil {
 		return state.NewLastRunError(time.Since(start), 0, "repo init check failed: "+err.Error())
 	}
 
@@ -42,6 +45,8 @@ func Run(ctx context.Context, cfg config.Config) state.LastRun {
 		args = append(args, "--exclude", ex)
 	}
 	// Consider adding: --one-file-system, --exclude-caches, etc. later.
+	// Add -- before include paths to prevent flag injection if paths start with -
+	args = append(args, "--")
 	args = append(args, cfg.Include...)
 
 	cmd := exec.CommandContext(ctx, "restic", args...)
@@ -52,7 +57,7 @@ func Run(ctx context.Context, cfg config.Config) state.LastRun {
 
 	var out bytes.Buffer
 	var jsonOut bytes.Buffer
-	cmd.Stderr = &out // Errors go to stderr
+	cmd.Stderr = &out     // Errors go to stderr
 	cmd.Stdout = &jsonOut // JSON output goes to stdout
 
 	err := cmd.Run()
@@ -80,7 +85,10 @@ func Run(ctx context.Context, cfg config.Config) state.LastRun {
 	return state.NewLastRunSuccess(dur, 0)
 }
 
-func ensureRepoInitialized(ctx context.Context, cfg config.Config) error {
+// checkOrInitRepo checks if the repository exists and is initialized.
+// If autoInit is true and the repo doesn't exist, it will attempt to initialize it.
+// If autoInit is false and the repo doesn't exist, it returns an error.
+func checkOrInitRepo(ctx context.Context, cfg config.Config, autoInit bool) error {
 	// "restic cat config" succeeds only if repo exists and is initialized
 	cmd := exec.CommandContext(ctx, "restic", "cat", "config")
 	cmd.Env = append(cmd.Environ(),
@@ -92,27 +100,66 @@ func ensureRepoInitialized(ctx context.Context, cfg config.Config) error {
 	cmd.Stderr = &out
 
 	if err := cmd.Run(); err == nil {
+		// Repository exists and is initialized
 		return nil
 	}
 
-	// Try init (idempotency depends on rest-server path; if already initialized, init will error)
+	// Repository doesn't exist or isn't initialized
+	if !autoInit {
+		return fmt.Errorf("repository does not exist or is not initialized (use --auto-init to automatically initialize, or run 'restic init' manually)")
+	}
+
+	// Auto-init is enabled, attempt to initialize
+	// Note: This is idempotent - if already initialized, init will return an error
+	// but we'll catch that and return a clearer message
 	initCmd := exec.CommandContext(ctx, "restic", "init")
 	initCmd.Env = cmd.Env
 	out.Reset()
 	initCmd.Stdout = &out
 	initCmd.Stderr = &out
 	if err := initCmd.Run(); err != nil {
-		return err
+		// Check if error is because repo already exists (idempotency)
+		errStr := out.String()
+		if strings.Contains(errStr, "already initialized") || strings.Contains(errStr, "config file already exists") {
+			// Repository was initialized between check and init (race condition) or already exists
+			return nil
+		}
+		return fmt.Errorf("failed to initialize repository: %w\noutput: %s", err, errStr)
 	}
 	return nil
 }
 
 func expandHome(p string) string {
-	if strings.HasPrefix(p, "~/") {
-		home, _ := filepath.Abs(strings.TrimSuffix(p, "/"))
-		_ = home
+	// Handle ~ or ~/... paths
+	if p == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return p // Return original if we can't get home dir
+		}
+		return home
 	}
-	// Minimal MVP: assume install writes absolute paths.
+	if strings.HasPrefix(p, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return p // Return original if we can't get home dir
+		}
+		// Replace ~ with home directory and join the rest
+		expanded := filepath.Join(home, p[2:])
+		// Normalize to absolute path
+		abs, err := filepath.Abs(expanded)
+		if err != nil {
+			return expanded // Return expanded path even if Abs fails
+		}
+		return abs
+	}
+	// If path doesn't start with ~, normalize to absolute path if relative
+	if !filepath.IsAbs(p) {
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			return p // Return original if Abs fails
+		}
+		return abs
+	}
 	return p
 }
 

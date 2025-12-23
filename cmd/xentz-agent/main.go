@@ -34,8 +34,14 @@ Examples:
   xentz-agent install --repo rest:https://... --password "..." --daily-at 02:00 --include "/Users/me/Documents"
   
   xentz-agent backup
+  xentz-agent backup --auto-init  # Auto-initialize repository if missing (use with caution)
   xentz-agent retention
   xentz-agent status
+
+Flags (backup):
+  --auto-init    Automatically initialize repository if it doesn't exist (default: false)
+                 WARNING: Only use if you're certain the repository URL is correct.
+                 Without this flag, backup will fail if repository doesn't exist.
 
 Flags (install):
   --token         Install token for enrollment (recommended, provided by control plane)
@@ -246,6 +252,7 @@ func main() {
 	case "backup":
 		fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 		configPath := fs.String("config", "", "Config path override")
+		autoInit := fs.Bool("auto-init", false, "Automatically initialize repository if it doesn't exist (use with caution)")
 		if err := fs.Parse(os.Args[2:]); err != nil {
 			log.Fatalf("parse flags: %v", err)
 		}
@@ -295,7 +302,7 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
 		defer cancel()
 
-		res := backup.Run(ctx, cfg)
+		res := backup.Run(ctx, cfg, *autoInit)
 		if err := st.SaveLastRun(res); err != nil {
 			log.Printf("save last run: %v", err)
 		}

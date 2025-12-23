@@ -119,7 +119,39 @@ func installSystemdUserService(exePath, configPath string, hour, minute int, std
 	return nil
 }
 
+// escapeSystemdPath escapes a path for use in systemd ExecStart
+// Systemd uses C-style escaping: spaces become \x20, backslashes become \\, etc.
+func escapeSystemdPath(path string) string {
+	// Systemd requires escaping of: space, tab, newline, backslash, and special chars
+	// We'll use a simple approach: escape backslashes and spaces
+	// For more complex cases, systemd also supports $, but we'll keep it simple
+	var result strings.Builder
+	for _, r := range path {
+		switch r {
+		case ' ':
+			result.WriteString("\\x20")
+		case '\t':
+			result.WriteString("\\t")
+		case '\n':
+			result.WriteString("\\n")
+		case '\\':
+			result.WriteString("\\\\")
+		case '$':
+			result.WriteString("$$")
+		default:
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
 func buildSystemdService(exePath, configPath string, hour, minute int, stdoutPath, stderrPath string) string {
+	// Escape paths for systemd ExecStart
+	exePathEscaped := escapeSystemdPath(exePath)
+	configPathEscaped := escapeSystemdPath(configPath)
+	stdoutPathEscaped := escapeSystemdPath(stdoutPath)
+	stderrPathEscaped := escapeSystemdPath(stderrPath)
+
 	return fmt.Sprintf(`[Unit]
 Description=xentz-agent backup service
 After=network.target
@@ -132,7 +164,7 @@ StandardError=append:%s
 
 [Install]
 WantedBy=default.target
-`, exePath, configPath, stdoutPath, stderrPath)
+`, exePathEscaped, configPathEscaped, stdoutPathEscaped, stderrPathEscaped)
 }
 
 func buildSystemdTimer(hour, minute int) string {
@@ -148,15 +180,39 @@ WantedBy=timers.target
 `, hour, minute)
 }
 
+// escapeCronPath escapes a path for use in cron by wrapping in single quotes
+// Single quotes in the path itself are handled by ending the quote, adding '\”, and starting a new quote
+func escapeCronPath(path string) string {
+	// Wrap in single quotes, escaping any single quotes in the path
+	var result strings.Builder
+	result.WriteByte('\'')
+	for _, r := range path {
+		if r == '\'' {
+			// End quote, add escaped quote, start new quote
+			result.WriteString("'\\''")
+		} else {
+			result.WriteRune(r)
+		}
+	}
+	result.WriteByte('\'')
+	return result.String()
+}
+
 func installCron(exePath, configPath string, hour, minute int, home string) error {
 	// Get current user's crontab
 	crontabCmd := exec.Command("crontab", "-l")
 	currentCron, _ := crontabCmd.Output() // Ignore error if no crontab exists
 
+	// Escape paths for cron (wrap in single quotes)
+	exePathEscaped := escapeCronPath(exePath)
+	configPathEscaped := escapeCronPath(configPath)
+	logDirEscaped := escapeCronPath(filepath.Join(home, ".xentz-agent", "logs"))
+
 	// Build cron entry
 	// Format: minute hour * * * command
-	cronEntry := fmt.Sprintf("%d %d * * * %s backup --config %s >> %s/.xentz-agent/logs/agent.out.log 2>> %s/.xentz-agent/logs/agent.err.log\n",
-		minute, hour, exePath, configPath, home, home)
+	// Use single quotes to prevent shell interpretation of paths
+	cronEntry := fmt.Sprintf("%d %d * * * %s backup --config %s >> %s/agent.out.log 2>> %s/agent.err.log\n",
+		minute, hour, exePathEscaped, configPathEscaped, logDirEscaped, logDirEscaped)
 
 	// Check if entry already exists
 	if strings.Contains(string(currentCron), exePath) {
@@ -187,4 +243,3 @@ func installCron(exePath, configPath string, hour, minute int, home string) erro
 
 	return nil
 }
-

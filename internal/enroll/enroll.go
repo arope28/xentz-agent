@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"time"
+
+	"xentz-agent/internal/validation"
 )
 
 // DeviceMetadata contains device information sent during enrollment
@@ -30,8 +32,8 @@ type EnrollmentRequest struct {
 type EnrollmentResponse struct {
 	TenantID     string `json:"tenant_id"`
 	DeviceID     string `json:"device_id"`
-	DeviceAPIKey string `json:"device_api_key"` // Long-lived, revocable API key for future requests
-	RepoPath     string `json:"repo_path"`      // Full repository URL or path
+	DeviceAPIKey string `json:"device_api_key"`     // Long-lived, revocable API key for future requests
+	RepoPath     string `json:"repo_path"`          // Full repository URL or path
 	Password     string `json:"password,omitempty"` // Optional: server-generated password
 }
 
@@ -74,6 +76,11 @@ func Enroll(token, serverURL string) (*EnrollmentResult, error) {
 	}
 	if serverURL == "" {
 		return nil, fmt.Errorf("server URL is required")
+	}
+
+	// Validate server URL to prevent SSRF
+	if err := validation.ValidateServerURL(serverURL); err != nil {
+		return nil, fmt.Errorf("invalid server URL: %w", err)
 	}
 
 	// Collect device metadata
@@ -195,4 +202,3 @@ func GetOrCreateUserID(configDir string) (string, error) {
 
 	return userID, nil
 }
-

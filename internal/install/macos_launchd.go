@@ -90,9 +90,37 @@ func parseHHMM(s string) (hour, minute int, err error) {
 	return h, m, nil
 }
 
+// escapeXML escapes XML special characters in a string
+func escapeXML(s string) string {
+	var result strings.Builder
+	for _, r := range s {
+		switch r {
+		case '&':
+			result.WriteString("&amp;")
+		case '<':
+			result.WriteString("&lt;")
+		case '>':
+			result.WriteString("&gt;")
+		case '"':
+			result.WriteString("&quot;")
+		case '\'':
+			result.WriteString("&apos;")
+		default:
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
 func buildPlist(exePath, configPath string, hour, minute int, stdoutPath, stderrPath string) string {
 	// launchd expects ProgramArguments as array; we run `backup`
 	// StartCalendarInterval handles daily schedule. RunAtLoad gives a run on install/boot.
+	// Escape XML special characters in paths
+	exePathEscaped := escapeXML(exePath)
+	configPathEscaped := escapeXML(configPath)
+	stdoutPathEscaped := escapeXML(stdoutPath)
+	stderrPathEscaped := escapeXML(stderrPath)
+
 	var b bytes.Buffer
 	fmt.Fprintf(&b, `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -122,7 +150,7 @@ func buildPlist(exePath, configPath string, hour, minute int, stdoutPath, stderr
     <key>ProcessType</key><string>Background</string>
   </dict>
 </plist>
-`, label, exePath, configPath, hour, minute, stdoutPath, stderrPath)
+`, label, exePathEscaped, configPathEscaped, hour, minute, stdoutPathEscaped, stderrPathEscaped)
 
 	// Small trick: add a comment-like timestamp to help debugging (doesn't affect plist parsing)
 	_ = time.Now().UTC()

@@ -7,33 +7,34 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"xentz-agent/internal/validation"
 )
 
 const (
-	maxErrorLength = 4096 // Maximum error message length in bytes
+	maxErrorLength    = 4096 // Maximum error message length in bytes
 	maxPendingReports = 20
 )
 
 // Report represents a backup or retention run report
 type Report struct {
-	DeviceID      string `json:"device_id"`
-	Job           string `json:"job"` // "backup" or "retention"
-	StartedAt     string `json:"started_at"` // RFC3339 UTC
-	FinishedAt    string `json:"finished_at"` // RFC3339 UTC
-	Status        string `json:"status"` // "success" or "failure"
-	DurationMS    int64  `json:"duration_ms"`
-	FilesTotal    int64  `json:"files_total,omitempty"`
-	BytesTotal    int64  `json:"bytes_total,omitempty"`
-	DataAddedBytes int64 `json:"data_added_bytes,omitempty"`
-	SnapshotID    string `json:"snapshot_id,omitempty"`
-	Error         string `json:"error,omitempty"` // Truncated to 4096 bytes
+	DeviceID       string `json:"device_id"`
+	Job            string `json:"job"`         // "backup" or "retention"
+	StartedAt      string `json:"started_at"`  // RFC3339 UTC
+	FinishedAt     string `json:"finished_at"` // RFC3339 UTC
+	Status         string `json:"status"`      // "success" or "failure"
+	DurationMS     int64  `json:"duration_ms"`
+	FilesTotal     int64  `json:"files_total,omitempty"`
+	BytesTotal     int64  `json:"bytes_total,omitempty"`
+	DataAddedBytes int64  `json:"data_added_bytes,omitempty"`
+	SnapshotID     string `json:"snapshot_id,omitempty"`
+	Error          string `json:"error,omitempty"` // Truncated to 4096 bytes
 }
 
 // getSpoolDir returns the spool directory path
@@ -61,24 +62,6 @@ func truncateError(errMsg string) string {
 	return truncated
 }
 
-// validateServerURL validates server URL to prevent SSRF attacks
-func validateServerURL(serverURL string) error {
-	parsed, err := url.Parse(serverURL)
-	if err != nil {
-		return fmt.Errorf("invalid URL: %w", err)
-	}
-	// Only allow http/https
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("only http/https schemes allowed")
-	}
-	// Block localhost to prevent SSRF (private IPs allowed for legitimate internal servers)
-	host := parsed.Hostname()
-	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-		return fmt.Errorf("localhost not allowed (SSRF protection)")
-	}
-	return nil
-}
-
 // SendReport sends a report to the server
 func SendReport(serverURL, deviceAPIKey string, report Report) error {
 	if serverURL == "" {
@@ -89,7 +72,7 @@ func SendReport(serverURL, deviceAPIKey string, report Report) error {
 	}
 
 	// Validate server URL to prevent SSRF
-	if err := validateServerURL(serverURL); err != nil {
+	if err := validation.ValidateServerURL(serverURL); err != nil {
 		return fmt.Errorf("invalid server URL: %w", err)
 	}
 
@@ -430,4 +413,3 @@ func SendPendingReports(serverURL, deviceAPIKey string, maxCount int) error {
 
 	return nil
 }
-

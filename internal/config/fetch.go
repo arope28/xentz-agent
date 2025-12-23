@@ -7,28 +7,11 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
-)
 
-// validateServerURL validates server URL to prevent SSRF attacks
-func validateServerURL(serverURL string) error {
-	parsed, err := url.Parse(serverURL)
-	if err != nil {
-		return fmt.Errorf("invalid URL: %w", err)
-	}
-	// Only allow http/https
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("only http/https schemes allowed")
-	}
-	// Block localhost to prevent SSRF (private IPs allowed for legitimate internal servers)
-	host := parsed.Hostname()
-	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-		return fmt.Errorf("localhost not allowed (SSRF protection)")
-	}
-	return nil
-}
+	"xentz-agent/internal/validation"
+)
 
 // FetchFromServer fetches configuration from the server using the device API key
 func FetchFromServer(serverURL, deviceAPIKey string) (Config, error) {
@@ -40,7 +23,7 @@ func FetchFromServer(serverURL, deviceAPIKey string) (Config, error) {
 	}
 
 	// Validate server URL to prevent SSRF
-	if err := validateServerURL(serverURL); err != nil {
+	if err := validation.ValidateServerURL(serverURL); err != nil {
 		return Config{}, fmt.Errorf("invalid server URL: %w", err)
 	}
 
@@ -168,4 +151,3 @@ func LoadWithFallback(serverURL, deviceAPIKey string) (Config, error) {
 	log.Println("⚠ Using cached config (server unreachable or config fetch failed)")
 	return cachedCfg, nil
 }
-
