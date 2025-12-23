@@ -21,31 +21,31 @@ The xentz-agent is a backup agent that:
        │ 1. xentz-agent install --token <token> --server <url>
        ▼
 ┌─────────────────────────────────────┐
-│  xentz-agent (install command)       │
-│  - Collects device metadata          │
-│  - Reads install token               │
-└──────┬───────────────────────────────┘
+│  xentz-agent (install command)      │
+│  - Collects device metadata         │
+│  - Reads install token              │
+└──────┬──────────────────────────────┘
        │
        │ 2. POST /v1/install
        │    Authorization: Bearer <token>
        │    Body: { user_id, metadata: { hostname, os, arch } }
        ▼
 ┌─────────────────────────────────────┐
-│  Control Plane Server                │
-│  - Validates install token           │
-│  - Generates tenant_id, device_id    │
-│  - Generates device_api_key           │
-│  - Creates repository path           │
-│  - Returns enrollment data           │
-└──────┬───────────────────────────────┘
+│  Control Plane Server               │
+│  - Validates install token          │
+│  - Generates tenant_id, device_id   │
+│  - Generates device_api_key         │
+│  - Creates repository path          │
+│  - Returns enrollment data          │
+└──────┬──────────────────────────────┘
        │
        │ 3. Response: { tenant_id, device_id, device_api_key, repo_path, password }
        ▼
 ┌─────────────────────────────────────┐
-│  xentz-agent                         │
-│  - Stores enrollment data in config  │
-│  - Saves config.json                 │
-│  - Creates scheduled task            │
+│  xentz-agent                        │
+│  - Stores enrollment data in config │
+│  - Saves config.json                │
+│  - Creates scheduled task           │
 └─────────────────────────────────────┘
 ```
 
@@ -54,96 +54,96 @@ The xentz-agent is a backup agent that:
 ```
 ┌─────────────────────────────────────┐
 │  Scheduler (launchd/systemd/cron)   │
-│  Triggers at configured time         │
-└──────┬───────────────────────────────┘
+│  Triggers at configured time        │
+└──────┬──────────────────────────────┘
        │
        │ 1. Executes: xentz-agent backup
        ▼
 ┌─────────────────────────────────────┐
-│  xentz-agent (backup command)        │
-│  - Loads local config                │
-└──────┬───────────────────────────────┘
+│  xentz-agent (backup command)       │
+│  - Loads local config               │
+└──────┬──────────────────────────────┘
        │
        │ 2. GET /v1/config
        │    Authorization: Bearer <device_api_key>
        ▼
 ┌─────────────────────────────────────┐
-│  Control Plane Server                │
-│  - Validates device_api_key          │
-│  - Returns current config            │
-└──────┬───────────────────────────────┘
+│  Control Plane Server               │
+│  - Validates device_api_key         │
+│  - Returns current config           │
+└──────┬──────────────────────────────┘
        │
        │ 3a. Success: Config JSON
        │ 3b. Failure: Use cached config (with warning)
        ▼
 ┌─────────────────────────────────────┐
-│  xentz-agent                         │
-│  - Validates config                  │
-│  - Caches successful fetch           │
-└──────┬───────────────────────────────┘
+│  xentz-agent                        │
+│  - Validates config                 │
+│  - Caches successful fetch          │
+└──────┬──────────────────────────────┘
        │
        │ 4. Send pending reports (if any)
        ▼
 ┌─────────────────────────────────────┐
-│  xentz-agent (report.SendPending)    │
-│  - Loads spooled reports             │
-│  - Sends oldest first (max 20)        │
-└──────┬───────────────────────────────┘
+│  xentz-agent (report.SendPending)   │
+│  - Loads spooled reports            │
+│  - Sends oldest first (max 20)      │
+└──────┬──────────────────────────────┘
        │
        │ 5. POST /v1/report (for each pending)
        │    Authorization: Bearer <device_api_key>
        ▼
 ┌─────────────────────────────────────┐
-│  Control Plane Server                │
-│  - Stores reports                    │
+│  Control Plane Server               │
+│  - Stores reports                   │
 └─────────────────────────────────────┘
        │
        │ 6. Execute backup
        ▼
 ┌─────────────────────────────────────┐
-│  xentz-agent (backup.Run)            │
-│  - Validates include paths           │
-│  - Checks restic availability         │
+│  xentz-agent (backup.Run)           │
+│  - Validates include paths          │
+│  - Checks restic availability       │
 │  - Ensures repository initialized   │
-│  - Executes: restic backup --json    │
-└──────┬───────────────────────────────┘
+│  - Executes: restic backup --json   │
+└──────┬──────────────────────────────┘
        │
        │ 7. restic backup
        │    RESTIC_REPOSITORY=<repo>
        │    RESTIC_PASSWORD_FILE=<file>
        ▼
 ┌─────────────────────────────────────┐
-│  Restic Repository (via REST API)    │
-│  - Stores backup data                │
-│  - Returns JSON stats                │
-└──────┬───────────────────────────────┘
+│  Restic Repository (via REST API)   │
+│  - Stores backup data               │
+│  - Returns JSON stats               │
+└──────┬──────────────────────────────┘
        │
        │ 8. Parse JSON output
        │    Extract: files_total, bytes_total,
        │             data_added_bytes, snapshot_id
        ▼
 ┌─────────────────────────────────────┐
-│  xentz-agent                         │
-│  - Saves backup state                │
+│  xentz-agent                        │
+│  - Saves backup state               │
 │  - Creates report payload           │
-└──────┬───────────────────────────────┘
+└──────┬──────────────────────────────┘
        │
        │ 9. POST /v1/report
        │    Authorization: Bearer <device_api_key>
        │    Body: { device_id, job: "backup", status, metrics, ... }
        ▼
 ┌─────────────────────────────────────┐
-│  Control Plane Server                │
-│  - Stores report                     │
+│  Control Plane Server               │
+│  - Stores report                    │
 └─────────────────────────────────────┘
        │
        │ 10a. Success: Report stored
        │ 10b. Failure: Spool report for retry
        ▼
 ┌─────────────────────────────────────┐
-│  xentz-agent                         │
+│  xentz-agent                        │
 │  - If send failed: Write to spool   │
-│  - Cleanup old spooled reports       │
+│  - Cleanup old spooled reports      │
 │  - Exit                             │
 └─────────────────────────────────────┘
 ```
@@ -153,64 +153,64 @@ The xentz-agent is a backup agent that:
 ```
 ┌─────────────────────────────────────┐
 │  Scheduler (launchd/systemd/cron)   │
-│  Triggers at configured time         │
-└──────┬───────────────────────────────┘
+│  Triggers at configured time        │
+└──────┬──────────────────────────────┘
        │
        │ 1. Executes: xentz-agent retention
        ▼
 ┌─────────────────────────────────────┐
-│  xentz-agent (retention command)     │
-│  - Loads local config                │
-└──────┬───────────────────────────────┘
+│  xentz-agent (retention command)    │
+│  - Loads local config               │
+└──────┬──────────────────────────────┘
        │
        │ 2. GET /v1/config
        │    Authorization: Bearer <device_api_key>
        ▼
 ┌─────────────────────────────────────┐
-│  Control Plane Server                │
-│  - Returns current config            │
-└──────┬───────────────────────────────┘
+│  Control Plane Server               │
+│  - Returns current config           │
+└──────┬──────────────────────────────┘
        │
        │ 3. Config with retention policy
        ▼
 ┌─────────────────────────────────────┐
-│  xentz-agent                         │
-│  - Validates retention policy        │
-│  - Pre-flight connectivity check     │
-└──────┬───────────────────────────────┘
+│  xentz-agent                        │
+│  - Validates retention policy       │
+│  - Pre-flight connectivity check    │
+└──────┬──────────────────────────────┘
        │
        │ 4. restic snapshots --last 1
        │    (connectivity check)
        ▼
 ┌─────────────────────────────────────┐
-│  Restic Repository                   │
-│  - Returns snapshot info             │
-└──────┬───────────────────────────────┘
+│  Restic Repository                  │
+│  - Returns snapshot info            │
+└──────┬──────────────────────────────┘
        │
        │ 5. Execute retention
        ▼
-┌─────────────────────────────────────┐
+┌──────────────────────────────────────┐
 │  xentz-agent (retention.RunRetention)│
 │  - Executes: restic forget           │
-│    --keep-daily, --keep-weekly, etc.│
-│  - Executes: restic prune (if set)  │
+│    --keep-daily, --keep-weekly, etc. │
+│  - Executes: restic prune (if set)   │
 └──────┬───────────────────────────────┘
        │
        │ 6. restic forget/prune
        ▼
 ┌─────────────────────────────────────┐
-│  Restic Repository                   │
-│  - Removes old snapshots             │
-│  - Prunes unreferenced data          │
-└──────┬───────────────────────────────┘
+│  Restic Repository                  │
+│  - Removes old snapshots            │
+│  - Prunes unreferenced data         │
+└──────┬──────────────────────────────┘
        │
        │ 7. Save retention state
        ▼
 ┌─────────────────────────────────────┐
-│  xentz-agent                         │
-│  - Creates report payload            │
+│  xentz-agent                        │
+│  - Creates report payload           │
 │  - Sends report (with spooling)     │
-│  - Cleanup old spooled reports       │
+│  - Cleanup old spooled reports      │
 └─────────────────────────────────────┘
 ```
 
@@ -218,16 +218,16 @@ The xentz-agent is a backup agent that:
 
 ```
 ┌─────────────────────────────────────┐
-│  xentz-agent                         │
-│  LoadWithFallback()                  │
-└──────┬───────────────────────────────┘
+│  xentz-agent                        │
+│  LoadWithFallback()                 │
+└──────┬──────────────────────────────┘
        │
        │ 1. Attempt: GET /v1/config
        │    Authorization: Bearer <device_api_key>
        ▼
 ┌─────────────────────────────────────┐
-│  Control Plane Server                │
-└──────┬───────────────────────────────┘
+│  Control Plane Server               │
+└──────┬──────────────────────────────┘
        │
        │ 2a. Success (200 OK)
        │     └─► Cache config
@@ -240,9 +240,9 @@ The xentz-agent is a backup agent that:
        │         └─► Failure: Return error (no config available)
        ▼
 ┌─────────────────────────────────────┐
-│  xentz-agent                         │
+│  xentz-agent                        │
 │  - Uses config (fresh or cached)    │
-│  - Proceeds with operation           │
+│  - Proceeds with operation          │
 └─────────────────────────────────────┘
 ```
 
@@ -250,16 +250,16 @@ The xentz-agent is a backup agent that:
 
 ```
 ┌─────────────────────────────────────┐
-│  xentz-agent                         │
-│  SendReportWithSpool()               │
-└──────┬───────────────────────────────┘
+│  xentz-agent                        │
+│  SendReportWithSpool()              │
+└──────┬──────────────────────────────┘
        │
        │ 1. Attempt: POST /v1/report
        │    Authorization: Bearer <device_api_key>
        ▼
 ┌─────────────────────────────────────┐
-│  Control Plane Server                │
-└──────┬───────────────────────────────┘
+│  Control Plane Server               │
+└──────┬──────────────────────────────┘
        │
        │ 2a. Success (200 OK)
        │     └─► Report sent, done
@@ -269,10 +269,10 @@ The xentz-agent is a backup agent that:
        │     └─► ~/.xentz-agent/spool/<timestamp>-<job>-<status>.json
        ▼
 ┌─────────────────────────────────────┐
-│  Local Spool Directory                │
-│  - Stores failed reports              │
-│  - Max 20 reports                    │
-│  - Oldest first retry                │
+│  Local Spool Directory              │
+│  - Stores failed reports            │
+│  - Max 20 reports                   │
+│  - Oldest first retry               │
 └─────────────────────────────────────┘
        │
        │ 3. On next run (backup or retention)
@@ -297,21 +297,21 @@ The xentz-agent is a backup agent that:
        │ 1. xentz-agent status
        ▼
 ┌─────────────────────────────────────┐
-│  xentz-agent (status command)        │
-│  - Loads backup state                │
-│  - Loads retention state             │
-└──────┬───────────────────────────────┘
+│  xentz-agent (status command)       │
+│  - Loads backup state               │
+│  - Loads retention state            │
+└──────┬──────────────────────────────┘
        │
        │ 2. Read state files
        │    ~/.xentz-agent/state/backup.json
        │    ~/.xentz-agent/state/retention.json
        ▼
 ┌─────────────────────────────────────┐
-│  xentz-agent                         │
-│  - Formats and displays status       │
-│  - Shows last run time, duration     │
+│  xentz-agent                        │
+│  - Formats and displays status      │
+│  - Shows last run time, duration    │
 │  - Shows metrics (files, bytes)     │
-│  - Shows error messages (if any)     │
+│  - Shows error messages (if any)    │
 └─────────────────────────────────────┘
 ```
 

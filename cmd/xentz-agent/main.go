@@ -439,14 +439,9 @@ func main() {
 
 	case "status":
 		fs := flag.NewFlagSet(cmd, flag.ExitOnError)
-		configPath := fs.String("config", "", "Config path override")
+		_ = fs.String("config", "", "Config path override (unused, kept for compatibility)")
 		if err := fs.Parse(os.Args[2:]); err != nil {
 			log.Fatalf("parse flags: %v", err)
-		}
-
-		cfgFile, err = config.ResolvePath(*configPath)
-		if err != nil {
-			log.Fatalf("resolve config path: %v", err)
 		}
 
 		st, err := state.New()
