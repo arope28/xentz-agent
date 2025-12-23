@@ -18,7 +18,7 @@ import (
 )
 
 func usage() {
-	fmt.Println(`xentz-agent - Backup Agent
+	fmt.Print(`xentz-agent - Backup Agent
 
 Commands:
   install    Install config + scheduled task (macOS: launchd, Windows: Task Scheduler, Linux: systemd/cron)
@@ -312,16 +312,16 @@ func main() {
 				reportStatus = "failure"
 			}
 			backupReport := report.Report{
-				DeviceID:      localCfg.DeviceID,
-				Job:           "backup",
-				StartedAt:     startTime.UTC().Format(time.RFC3339),
-				FinishedAt:    finishedTime.UTC().Format(time.RFC3339),
-				Status:        reportStatus,
-				DurationMS:    res.DurationMS,
-				FilesTotal:    res.FilesTotal,
-				BytesTotal:    res.BytesTotal,
+				DeviceID:       localCfg.DeviceID,
+				Job:            "backup",
+				StartedAt:      startTime.UTC().Format(time.RFC3339),
+				FinishedAt:     finishedTime.UTC().Format(time.RFC3339),
+				Status:         reportStatus,
+				DurationMS:     res.DurationMS,
+				FilesTotal:     res.FilesTotal,
+				BytesTotal:     res.BytesTotal,
 				DataAddedBytes: res.DataAddedBytes,
-				SnapshotID:    res.SnapshotID,
+				SnapshotID:     res.SnapshotID,
 			}
 			if res.Error != "" {
 				backupReport.Error = res.Error
