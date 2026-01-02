@@ -134,6 +134,12 @@ func main() {
 				log.Println("Device is already enrolled. Using existing configuration.")
 				log.Printf("  Tenant ID: %s", cfg.TenantID)
 				log.Printf("  Device ID: %s", cfg.DeviceID)
+
+				// Update server URL if a new one is provided (allows switching servers)
+				if *server != "" && cfg.ServerURL != *server {
+					log.Printf("  Updating server URL: %s -> %s", cfg.ServerURL, *server)
+					cfg.ServerURL = *server
+				}
 			} else {
 				// Perform enrollment
 				log.Println("Enrolling device with control plane...")

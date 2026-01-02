@@ -106,8 +106,9 @@ func Enroll(token, serverURL string) (*EnrollmentResult, error) {
 		return nil, fmt.Errorf("marshal enrollment request: %w", err)
 	}
 
-	// Make POST request to /v1/install with Authorization Bearer header
-	url := fmt.Sprintf("%s/v1/install", serverURL)
+	// Make POST request to /control/v1/install with Authorization Bearer header
+	// Note: nginx proxies /control/* to the control plane backend
+	url := fmt.Sprintf("%s/control/v1/install", serverURL)
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)

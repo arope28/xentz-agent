@@ -86,8 +86,9 @@ func SendReport(serverURL, deviceAPIKey string, report Report) error {
 		return fmt.Errorf("marshal report: %w", err)
 	}
 
-	// Make POST request to /v1/report
-	url := fmt.Sprintf("%s/v1/report", serverURL)
+	// Make POST request to /control/v1/report
+	// Note: nginx proxies /control/* to the control plane backend
+	url := fmt.Sprintf("%s/control/v1/report", serverURL)
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)

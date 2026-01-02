@@ -27,8 +27,9 @@ func FetchFromServer(serverURL, deviceAPIKey string) (Config, error) {
 		return Config{}, fmt.Errorf("invalid server URL: %w", err)
 	}
 
-	// Make GET request to /v1/config
-	url := fmt.Sprintf("%s/v1/config", serverURL)
+	// Make GET request to /control/v1/config
+	// Note: nginx proxies /control/* to the control plane backend
+	url := fmt.Sprintf("%s/control/v1/config", serverURL)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return Config{}, fmt.Errorf("create request: %w", err)
