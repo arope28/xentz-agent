@@ -311,6 +311,20 @@ func EnsurePasswordFile(cfg Config, serverURL, deviceAPIKey string) error {
 		}
 
 		log.Println("✓ Password recovered from server and saved")
+
+		// Validate the recovered password if repository is configured
+		if cfg.Restic.Repository != "" {
+			if err := validatePassword(cfg.Restic.Repository, passwordPath); err != nil {
+				log.Printf("error: Recovered password from server is also incorrect: %v", err)
+				log.Println("This indicates the repository was initialized with a different password than stored on the server.")
+				log.Println("You may need to:")
+				log.Println("  1. Re-initialize the repository on the server, OR")
+				log.Println("  2. Delete the repository from S3 and re-initialize it")
+				return fmt.Errorf("recovered password is incorrect - repository password mismatch: %w", err)
+			}
+			log.Println("✓ Recovered password validated successfully")
+		}
+
 		return nil
 	}
 
