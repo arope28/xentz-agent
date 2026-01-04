@@ -292,6 +292,11 @@ func main() {
 			cfg.UserID = localCfg.UserID
 			// Always preserve password file path from local config (it's a local file path)
 			cfg.Restic.PasswordFile = localCfg.Restic.PasswordFile
+
+			// Ensure password file exists and is valid (recover from server if missing)
+			if err := config.EnsurePasswordFile(cfg, localCfg.ServerURL, localCfg.DeviceAPIKey); err != nil {
+				log.Fatalf("password file validation failed: %v", err)
+			}
 		} else {
 			// Legacy mode: use local config directly
 			log.Println("Using local config (device not enrolled or legacy mode)")
@@ -395,6 +400,11 @@ func main() {
 			cfg.UserID = localCfg.UserID
 			// Always preserve password file path from local config (it's a local file path)
 			cfg.Restic.PasswordFile = localCfg.Restic.PasswordFile
+
+			// Ensure password file exists and is valid (recover from server if missing)
+			if err := config.EnsurePasswordFile(cfg, localCfg.ServerURL, localCfg.DeviceAPIKey); err != nil {
+				log.Fatalf("password file validation failed: %v", err)
+			}
 		} else {
 			// Legacy mode: use local config directly
 			log.Println("Using local config (device not enrolled or legacy mode)")

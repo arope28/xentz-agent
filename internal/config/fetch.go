@@ -7,6 +7,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -177,4 +179,131 @@ func LoadWithFallback(serverURL, deviceAPIKey string) (Config, error) {
 
 	log.Println("⚠ Using cached config (server unreachable or config fetch failed)")
 	return cachedCfg, nil
+}
+
+// FetchPassword retrieves the restic password from the server
+// This is used to recover the password if the local password file is lost
+func FetchPassword(serverURL, deviceAPIKey string) (string, error) {
+	if serverURL == "" {
+		return "", fmt.Errorf("server URL is required")
+	}
+	if deviceAPIKey == "" {
+		return "", fmt.Errorf("device API key is required")
+	}
+
+	// Validate server URL to prevent SSRF
+	if err := validation.ValidateServerURL(serverURL); err != nil {
+		return "", fmt.Errorf("invalid server URL: %w", err)
+	}
+
+	// Make GET request to /control/v1/password
+	url := fmt.Sprintf("%s/control/v1/password", serverURL)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", deviceAPIKey))
+	req.Header.Set("Accept", "application/json")
+
+	// Set timeout
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("password fetch failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		var errMsg bytes.Buffer
+		errMsg.ReadFrom(resp.Body)
+		return "", fmt.Errorf("authentication failed (status %d): invalid or revoked device API key", resp.StatusCode)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		var errMsg bytes.Buffer
+		io.CopyN(&errMsg, resp.Body, 512)
+		errStr := strings.TrimSpace(errMsg.String())
+		return "", fmt.Errorf("password fetch failed (status %d): %s", resp.StatusCode, errStr)
+	}
+
+	// Parse response
+	var passwordResp struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&passwordResp); err != nil {
+		return "", fmt.Errorf("decode password response: %w", err)
+	}
+
+	if passwordResp.Password == "" {
+		return "", fmt.Errorf("server returned empty password")
+	}
+
+	return passwordResp.Password, nil
+}
+
+// EnsurePasswordFile ensures the password file exists and contains the correct password
+// If the file is missing or invalid, it attempts to retrieve it from the server
+func EnsurePasswordFile(cfg Config, serverURL, deviceAPIKey string) error {
+	if cfg.Restic.PasswordFile == "" {
+		return fmt.Errorf("password_file not configured")
+	}
+
+	// Expand home directory in path
+	passwordPath := cfg.Restic.PasswordFile
+	if strings.HasPrefix(passwordPath, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("get home directory: %w", err)
+		}
+		passwordPath = filepath.Join(home, strings.TrimPrefix(passwordPath, "~/"))
+	}
+
+	// Check if password file exists and is readable
+	_, err := os.Stat(passwordPath)
+	passwordExists := err == nil
+
+	// If password file exists, validate it by attempting to read it
+	if passwordExists {
+		data, err := os.ReadFile(passwordPath)
+		if err != nil {
+			log.Printf("warning: password file exists but cannot be read: %v", err)
+			passwordExists = false // Treat as missing
+		} else if len(bytes.TrimSpace(data)) == 0 {
+			log.Printf("warning: password file exists but is empty")
+			passwordExists = false // Treat as missing
+		}
+	}
+
+	// If password file is missing or invalid, try to retrieve it from server
+	if !passwordExists {
+		if serverURL == "" || deviceAPIKey == "" {
+			return fmt.Errorf("password file missing and cannot recover (server URL or API key not available)")
+		}
+
+		log.Println("Password file missing or invalid, attempting to recover from server...")
+		password, err := FetchPassword(serverURL, deviceAPIKey)
+		if err != nil {
+			return fmt.Errorf("failed to retrieve password from server: %w", err)
+		}
+
+		// Ensure directory exists
+		dir := filepath.Dir(passwordPath)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fmt.Errorf("create password file directory: %w", err)
+		}
+
+		// Write password file with secure permissions (0600)
+		if err := os.WriteFile(passwordPath, []byte(password), 0o600); err != nil {
+			return fmt.Errorf("write password file: %w", err)
+		}
+
+		log.Println("✓ Password recovered from server and saved")
+		return nil
+	}
+
+	// Password file exists and is valid
+	return nil
 }
