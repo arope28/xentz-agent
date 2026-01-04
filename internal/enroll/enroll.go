@@ -24,8 +24,9 @@ type DeviceMetadata struct {
 // EnrollmentRequest is sent to the server during enrollment
 // Note: Token is sent in Authorization header, not in body
 type EnrollmentRequest struct {
-	UserID   string         `json:"user_id,omitempty"` // User identifier for repository path construction
-	Metadata DeviceMetadata `json:"metadata"`
+	UserID   string         `json:"user_id,omitempty"`   // User identifier for repository path construction
+	Metadata DeviceMetadata `json:"metadata"`            // Device metadata (hostname, os, arch)
+	Include  []string      `json:"include,omitempty"`   // Include paths for backup (sent to control plane for storage)
 }
 
 // EnrollmentResponse is received from the server
@@ -70,7 +71,8 @@ func GetUserID() (string, error) {
 }
 
 // Enroll calls the control plane API to enroll the device and get server-issued identifiers
-func Enroll(token, serverURL string) (*EnrollmentResult, error) {
+// includePaths are sent to the control plane so it can store and return them in config
+func Enroll(token, serverURL string, includePaths []string) (*EnrollmentResult, error) {
 	if token == "" {
 		return nil, fmt.Errorf("install token is required")
 	}
@@ -96,9 +98,11 @@ func Enroll(token, serverURL string) (*EnrollmentResult, error) {
 	}
 
 	// Prepare enrollment request (token goes in Authorization header, not body)
+	// Include paths are sent in the request body so the control plane can store them
 	reqBody := EnrollmentRequest{
 		UserID:   userID,
 		Metadata: metadata,
+		Include:  includePaths,
 	}
 
 	jsonData, err := json.Marshal(reqBody)

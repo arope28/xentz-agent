@@ -143,7 +143,8 @@ func main() {
 			} else {
 				// Perform enrollment
 				log.Println("Enrolling device with control plane...")
-				enrollmentResult, err := enroll.Enroll(*token, *server)
+				// Pass include paths to enrollment so control plane can store them
+				enrollmentResult, err := enroll.Enroll(*token, *server, includes)
 				if err != nil {
 					log.Fatalf("enrollment failed: %v", err)
 				}
