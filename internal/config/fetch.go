@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -274,6 +275,15 @@ func EnsurePasswordFile(cfg Config, serverURL, deviceAPIKey string) error {
 		} else if len(bytes.TrimSpace(data)) == 0 {
 			log.Printf("warning: password file exists but is empty")
 			passwordExists = false // Treat as missing
+		} else {
+			// Validate password by testing it against the repository (if repository is configured)
+			if cfg.Restic.Repository != "" {
+				if err := validatePassword(cfg.Restic.Repository, passwordPath); err != nil {
+					log.Printf("warning: password validation failed (wrong password): %v", err)
+					log.Println("Password file contains incorrect password, attempting to recover from server...")
+					passwordExists = false // Treat as invalid, trigger recovery
+				}
+			}
 		}
 	}
 
@@ -306,4 +316,45 @@ func EnsurePasswordFile(cfg Config, serverURL, deviceAPIKey string) error {
 
 	// Password file exists and is valid
 	return nil
+}
+
+// validatePassword tests if the password file contains the correct password for the repository
+// by attempting to read the repository config
+func validatePassword(repository, passwordFile string) error {
+	// Use "restic cat config" to test if password is correct
+	// This command will fail with "wrong password" if the password is incorrect
+	cmd := exec.Command("restic", "cat", "config")
+	cmd.Env = append(os.Environ(),
+		"RESTIC_REPOSITORY="+repository,
+		"RESTIC_PASSWORD_FILE="+expandHomePath(passwordFile),
+	)
+	
+	// Capture output to check for password errors
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	
+	if err := cmd.Run(); err != nil {
+		errStr := out.String()
+		// Check if error is due to wrong password
+		if strings.Contains(errStr, "wrong password") || strings.Contains(errStr, "no key found") {
+			return fmt.Errorf("wrong password: %w", err)
+		}
+		// Other errors (network, repo doesn't exist) are not password validation failures
+		// We'll let those pass through - they'll be caught during actual backup
+	}
+	
+	return nil
+}
+
+// expandHomePath expands ~ to home directory
+func expandHomePath(p string) string {
+	if strings.HasPrefix(p, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return p // Return as-is if we can't get home dir
+		}
+		return filepath.Join(home, strings.TrimPrefix(p, "~/"))
+	}
+	return p
 }
