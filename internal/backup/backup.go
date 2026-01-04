@@ -100,11 +100,25 @@ func checkOrInitRepo(ctx context.Context, cfg config.Config, autoInit bool) erro
 	cmd.Stderr = &out
 
 	if err := cmd.Run(); err == nil {
-		// Repository exists and is initialized
+		// Repository exists and is initialized, password is correct
 		return nil
 	}
 
-	// Repository doesn't exist or isn't initialized
+	// Command failed - check if it's a password error or repository doesn't exist
+	errStr := out.String()
+	isPasswordError := strings.Contains(errStr, "wrong password") || strings.Contains(errStr, "no key found")
+	
+	if isPasswordError {
+		// Password is wrong - this is a critical error
+		// DO NOT try to initialize with wrong password
+		return fmt.Errorf("password is incorrect for repository %s. "+
+			"This usually means the repository was initialized with a different password. "+
+			"Check that the password file contains the correct password used to initialize the repository. "+
+			"If the password file is wrong, delete it and let the agent recover it from the server. "+
+			"Output: %s", cfg.Restic.Repository, errStr)
+	}
+
+	// Repository doesn't exist or isn't initialized (not a password error)
 	if !autoInit {
 		return fmt.Errorf("repository does not exist or is not initialized (use --auto-init to automatically initialize, or run 'restic init' manually)")
 	}
@@ -119,12 +133,12 @@ func checkOrInitRepo(ctx context.Context, cfg config.Config, autoInit bool) erro
 	initCmd.Stderr = &out
 	if err := initCmd.Run(); err != nil {
 		// Check if error is because repo already exists (idempotency)
-		errStr := out.String()
-		if strings.Contains(errStr, "already initialized") || strings.Contains(errStr, "config file already exists") {
+		initErrStr := out.String()
+		if strings.Contains(initErrStr, "already initialized") || strings.Contains(initErrStr, "config file already exists") {
 			// Repository was initialized between check and init (race condition) or already exists
 			return nil
 		}
-		return fmt.Errorf("failed to initialize repository: %w\noutput: %s", err, errStr)
+		return fmt.Errorf("failed to initialize repository: %w\noutput: %s", err, initErrStr)
 	}
 	return nil
 }

@@ -306,6 +306,8 @@ func EnsurePasswordFile(cfg Config, serverURL, deviceAPIKey string) error {
 		}
 
 		// Write password file with secure permissions (0600)
+		// Trim any existing newlines and add exactly one newline for consistency
+		password = strings.TrimSpace(password) + "\n"
 		if err := os.WriteFile(passwordPath, []byte(password), 0o600); err != nil {
 			return fmt.Errorf("write password file: %w", err)
 		}
