@@ -36,6 +36,7 @@ type Config struct {
 
 	// Control plane and scheduling
 	ServerURL string   `json:"server_url,omitempty"` // Base URL for control plane
+	Enabled   *bool    `json:"enabled,omitempty"`    // Kill-switch: if false, agent must stop all operations (server-controlled)
 	Schedule  Schedule `json:"schedule"`
 	Include   []string `json:"include"`
 	Exclude   []string `json:"exclude,omitempty"`

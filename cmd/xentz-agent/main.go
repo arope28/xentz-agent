@@ -298,6 +298,11 @@ func main() {
 			cfg = localCfg
 		}
 
+		// KILL-SWITCH: Final safety check - if device is disabled, exit immediately
+		if cfg.Enabled != nil && !*cfg.Enabled {
+			log.Fatalf("device is disabled by server (kill-switch activated). All operations stopped.")
+		}
+
 		st, err := state.New()
 		if err != nil {
 			log.Fatalf("state init: %v", err)
@@ -394,6 +399,11 @@ func main() {
 			// Legacy mode: use local config directly
 			log.Println("Using local config (device not enrolled or legacy mode)")
 			cfg = localCfg
+		}
+
+		// KILL-SWITCH: Final safety check - if device is disabled, exit immediately
+		if cfg.Enabled != nil && !*cfg.Enabled {
+			log.Fatalf("device is disabled by server (kill-switch activated). All operations stopped.")
 		}
 
 		st, err := state.New()

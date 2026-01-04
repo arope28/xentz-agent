@@ -74,6 +74,12 @@ func FetchFromServer(serverURL, deviceAPIKey string) (Config, error) {
 		return Config{}, fmt.Errorf("decode config response: %w", err)
 	}
 
+	// KILL-SWITCH: Check if device is disabled (enabled=false)
+	// This must be checked BEFORE any other validation to ensure disabled status takes precedence
+	if cfg.Enabled != nil && !*cfg.Enabled {
+		return Config{}, fmt.Errorf("device is disabled by server (kill-switch activated)")
+	}
+
 	// Validate required fields
 	if len(cfg.Include) == 0 {
 		return Config{}, fmt.Errorf("server config missing required field: include")
@@ -132,6 +138,8 @@ func FetchAndCache(serverURL, deviceAPIKey string) (Config, error) {
 }
 
 // LoadWithFallback attempts to fetch config from server, falling back to cached config if server is unreachable
+// IMPORTANT: If server returns enabled=false (kill-switch), this function will return an error and NOT use cached config.
+// This ensures that a disabled device cannot continue operating even with cached config.
 func LoadWithFallback(serverURL, deviceAPIKey string) (Config, error) {
 	// Try to fetch from server
 	cfg, err := FetchAndCache(serverURL, deviceAPIKey)
@@ -140,13 +148,31 @@ func LoadWithFallback(serverURL, deviceAPIKey string) (Config, error) {
 		return cfg, nil
 	}
 
-	// Fetch failed, try to load cached config
+	// Check if the error is due to device being disabled (kill-switch)
+	// If so, we MUST NOT use cached config - the device must be disabled
+	if strings.Contains(err.Error(), "device is disabled") || strings.Contains(err.Error(), "kill-switch") {
+		return Config{}, fmt.Errorf("device is disabled by server: %w", err)
+	}
+
+	// Check if the error is due to authentication failure (401/403)
+	// This could indicate API key revocation, so we should not use cached config
+	if strings.Contains(err.Error(), "authentication failed") || strings.Contains(err.Error(), "invalid or revoked") {
+		return Config{}, fmt.Errorf("authentication failed (API key may be revoked): %w", err)
+	}
+
+	// For other errors (network issues, etc.), we can fall back to cached config
 	log.Printf("warning: failed to fetch config from server: %v", err)
 	log.Println("Attempting to use cached config...")
 
 	cachedCfg, cacheErr := ReadCached()
 	if cacheErr != nil {
 		return Config{}, fmt.Errorf("config fetch failed and no cached config available: %w (cache error: %v)", err, cacheErr)
+	}
+
+	// IMPORTANT: Even when using cached config, check if it was previously disabled
+	// This prevents a device from continuing if it was disabled before going offline
+	if cachedCfg.Enabled != nil && !*cachedCfg.Enabled {
+		return Config{}, fmt.Errorf("device is disabled (cached config shows enabled=false)")
 	}
 
 	log.Println("⚠ Using cached config (server unreachable or config fetch failed)")
