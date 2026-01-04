@@ -24,17 +24,18 @@ const (
 
 // Report represents a backup or retention run report
 type Report struct {
-	DeviceID       string `json:"device_id"`
-	Job            string `json:"job"`         // "backup" or "retention"
-	StartedAt      string `json:"started_at"`  // RFC3339 UTC
-	FinishedAt     string `json:"finished_at"` // RFC3339 UTC
-	Status         string `json:"status"`      // "success" or "failure"
-	DurationMS     int64  `json:"duration_ms"`
-	FilesTotal     int64  `json:"files_total,omitempty"`
-	BytesTotal     int64  `json:"bytes_total,omitempty"`
-	DataAddedBytes int64  `json:"data_added_bytes,omitempty"`
-	SnapshotID     string `json:"snapshot_id,omitempty"`
-	Error          string `json:"error,omitempty"` // Truncated to 4096 bytes
+	DeviceID              string `json:"device_id"`
+	Job                   string `json:"job"`         // "backup" or "retention"
+	StartedAt             string `json:"started_at"`  // RFC3339 UTC
+	FinishedAt            string `json:"finished_at"` // RFC3339 UTC
+	Status                string `json:"status"`       // "success" or "failure"
+	DurationMS            int64  `json:"duration_ms"`
+	FilesTotal            int64  `json:"files_total,omitempty"`
+	BytesTotal            int64  `json:"bytes_total,omitempty"`
+	DataAddedBytes        int64  `json:"data_added_bytes,omitempty"`
+	SnapshotID            string `json:"snapshot_id,omitempty"`
+	Error                 string `json:"error,omitempty"`                 // Truncated to 4096 bytes
+	ConfigValidationError string `json:"config_validation_error,omitempty"` // Config validation error message if any
 }
 
 // getSpoolDir returns the spool directory path
