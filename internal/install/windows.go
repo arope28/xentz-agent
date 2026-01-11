@@ -55,11 +55,20 @@ func WindowsTaskSchedulerInstall(configPath string) error {
 	stdoutPath := filepath.Join(logDir, "agent.out.log")
 	stderrPath := filepath.Join(logDir, "agent.err.log")
 
+	// Build PATH with common restic installation locations on Windows
+	// Include user's local bin, Go bin, and system paths
+	goBin := filepath.Join(home, "go", "bin")
+	localBin := filepath.Join(home, "AppData", "Local", "Programs")
+	// Windows PATH uses semicolons as separators
+	// Include common installation locations: user's Go bin, local programs, and system PATH
+	pathEnv := fmt.Sprintf("%s;%s;%%PATH%%", goBin, localBin)
+
 	// Create a batch file wrapper to handle logging
 	batchFile := filepath.Join(home, ".xentz-agent", "run-backup.bat")
 	batchContent := fmt.Sprintf(`@echo off
+set PATH=%s
 "%s" backup --config "%s" >> "%s" 2>> "%s"
-`, exePath, configPath, stdoutPath, stderrPath)
+`, pathEnv, exePath, configPath, stdoutPath, stderrPath)
 	
 	if err := os.WriteFile(batchFile, []byte(batchContent), 0o644); err != nil {
 		return fmt.Errorf("write batch file: %w", err)

@@ -121,6 +121,21 @@ func buildPlist(exePath, configPath string, hour, minute int, stdoutPath, stderr
 	stdoutPathEscaped := escapeXML(stdoutPath)
 	stderrPathEscaped := escapeXML(stderrPath)
 
+	// Get user's home directory to include in PATH
+	home, err := os.UserHomeDir()
+	homeBin := ""
+	if err == nil {
+		// Include common user installation paths
+		goBin := filepath.Join(home, "go", "bin")
+		localBin := filepath.Join(home, ".local", "bin")
+		homeBin = goBin + ":" + localBin + ":"
+	}
+
+	// Build PATH with common restic installation locations
+	// Include system paths, Homebrew paths (Intel and Apple Silicon), and user paths
+	pathEnv := homeBin + "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+	pathEnvEscaped := escapeXML(pathEnv)
+
 	var b bytes.Buffer
 	fmt.Fprintf(&b, `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -136,6 +151,12 @@ func buildPlist(exePath, configPath string, hour, minute int, stdoutPath, stderr
       <string>%s</string>
     </array>
 
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>PATH</key>
+      <string>%s</string>
+    </dict>
+
     <key>RunAtLoad</key><true/>
 
     <key>StartCalendarInterval</key>
@@ -150,7 +171,7 @@ func buildPlist(exePath, configPath string, hour, minute int, stdoutPath, stderr
     <key>ProcessType</key><string>Background</string>
   </dict>
 </plist>
-`, label, exePathEscaped, configPathEscaped, hour, minute, stdoutPathEscaped, stderrPathEscaped)
+`, label, exePathEscaped, configPathEscaped, pathEnvEscaped, hour, minute, stdoutPathEscaped, stderrPathEscaped)
 
 	// Small trick: add a comment-like timestamp to help debugging (doesn't affect plist parsing)
 	_ = time.Now().UTC()

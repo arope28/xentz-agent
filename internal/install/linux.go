@@ -152,19 +152,37 @@ func buildSystemdService(exePath, configPath string, hour, minute int, stdoutPat
 	stdoutPathEscaped := escapeSystemdPath(stdoutPath)
 	stderrPathEscaped := escapeSystemdPath(stderrPath)
 
+	// Get user's home directory to include in PATH
+	home, err := os.UserHomeDir()
+	homeBin := ""
+	if err == nil {
+		// Include common user installation paths
+		goBin := filepath.Join(home, "go", "bin")
+		localBin := filepath.Join(home, ".local", "bin")
+		homeBin = goBin + ":" + localBin + ":"
+	}
+
+	// Build PATH with common restic installation locations
+	// Include system paths, Homebrew paths (Intel and Apple Silicon), and user paths
+	// Common Linux paths: /usr/local/bin, /usr/local/sbin, /usr/bin, /bin, /usr/sbin, /sbin, /snap/bin
+	pathEnv := homeBin + "/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin:/snap/bin"
+	// Escape PATH for systemd (spaces and special chars)
+	pathEnvEscaped := escapeSystemdPath(pathEnv)
+
 	return fmt.Sprintf(`[Unit]
 Description=xentz-agent backup service
 After=network.target
 
 [Service]
 Type=oneshot
+Environment="PATH=%s"
 ExecStart=%s backup --config %s
 StandardOutput=append:%s
 StandardError=append:%s
 
 [Install]
 WantedBy=default.target
-`, exePathEscaped, configPathEscaped, stdoutPathEscaped, stderrPathEscaped)
+`, pathEnvEscaped, exePathEscaped, configPathEscaped, stdoutPathEscaped, stderrPathEscaped)
 }
 
 func buildSystemdTimer(hour, minute int) string {
@@ -208,11 +226,20 @@ func installCron(exePath, configPath string, hour, minute int, home string) erro
 	configPathEscaped := escapeCronPath(configPath)
 	logDirEscaped := escapeCronPath(filepath.Join(home, ".xentz-agent", "logs"))
 
+	// Build PATH with common restic installation locations
+	// Include system paths and user paths
+	goBin := filepath.Join(home, "go", "bin")
+	localBin := filepath.Join(home, ".local", "bin")
+	pathEnv := fmt.Sprintf("%s:%s:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin:/snap/bin", goBin, localBin)
+	pathEnvEscaped := escapeCronPath(pathEnv)
+
 	// Build cron entry
 	// Format: minute hour * * * command
+	// Set PATH at the start of the command to ensure restic can be found
 	// Use single quotes to prevent shell interpretation of paths
-	cronEntry := fmt.Sprintf("%d %d * * * %s backup --config %s >> %s/agent.out.log 2>> %s/agent.err.log\n",
-		minute, hour, exePathEscaped, configPathEscaped, logDirEscaped, logDirEscaped)
+	// PATH is set inline with the command using shell syntax
+	cronEntry := fmt.Sprintf("%d %d * * * PATH=%s %s backup --config %s >> %s/agent.out.log 2>> %s/agent.err.log\n",
+		minute, hour, pathEnvEscaped, exePathEscaped, configPathEscaped, logDirEscaped, logDirEscaped)
 
 	// Check if entry already exists
 	if strings.Contains(string(currentCron), exePath) {
