@@ -309,13 +309,32 @@ func main() {
 			log.Fatalf("device is disabled by server (kill-switch activated). All operations stopped.")
 		}
 
+		// Initialize structured logger
+		logger, err := logging.NewLogger(cfg.TenantID, cfg.DeviceID)
+		if err != nil {
+			log.Printf("warning: failed to initialize logger: %v", err)
+			logger = nil // Continue without structured logging
+		} else {
+			defer logger.Close()
+			logger.SetComponent("backup")
+		}
+
 		st, err := state.New()
 		if err != nil {
+			if logger != nil {
+				logger.Error("state init failed", err, nil)
+			}
 			log.Fatalf("state init: %v", err)
 		}
 
 		// Track start time for reporting
 		startTime := time.Now()
+		
+		if logger != nil {
+			logger.Info("backup started", map[string]interface{}{
+				"auto_init": *autoInit,
+			})
+		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
 		defer cancel()
