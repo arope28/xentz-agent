@@ -13,6 +13,7 @@ import (
 	"xentz-agent/internal/config"
 	"xentz-agent/internal/enroll"
 	"xentz-agent/internal/install"
+	"xentz-agent/internal/logging"
 	"xentz-agent/internal/report"
 	"xentz-agent/internal/state"
 )
@@ -321,7 +322,21 @@ func main() {
 
 		res := backup.Run(ctx, cfg, *autoInit)
 		if err := st.SaveLastRun(res); err != nil {
+			if logger != nil {
+				logger.Warn("failed to save last run", map[string]interface{}{
+					"error": err.Error(),
+				})
+			}
 			log.Printf("save last run: %v", err)
+		}
+
+		// Ship logs to control plane (non-blocking)
+		if logger != nil && localCfg.DeviceID != "" && localCfg.DeviceAPIKey != "" && localCfg.ServerURL != "" {
+			go func() {
+				if err := logger.ShipLogs(localCfg.ServerURL, localCfg.DeviceAPIKey); err != nil {
+					log.Printf("warning: failed to ship logs: %v", err)
+				}
+			}()
 		}
 
 		// Send reports (non-blocking)
@@ -359,8 +374,24 @@ func main() {
 		}
 
 		if res.Status != "success" {
+			if logger != nil {
+				logger.Error("backup failed", fmt.Errorf("%s", res.Error), map[string]interface{}{
+					"duration_ms": res.DurationMS,
+				})
+			}
 			log.Printf("backup failed ❌: %s", res.Error)
 			os.Exit(1)
+		}
+		
+		if logger != nil {
+			logger.Info("backup completed successfully", map[string]interface{}{
+				"duration_ms":    res.DurationMS,
+				"bytes_sent":     res.BytesSent,
+				"files_total":    res.FilesTotal,
+				"bytes_total":    res.BytesTotal,
+				"data_added_bytes": res.DataAddedBytes,
+				"snapshot_id":    res.SnapshotID,
+			})
 		}
 		log.Printf("backup ok ✅: duration=%s bytes_sent=%d", res.Duration, res.BytesSent)
 		return
@@ -416,13 +447,30 @@ func main() {
 			log.Fatalf("device is disabled by server (kill-switch activated). All operations stopped.")
 		}
 
+		// Initialize structured logger
+		logger, err := logging.NewLogger(cfg.TenantID, cfg.DeviceID)
+		if err != nil {
+			log.Printf("warning: failed to initialize logger: %v", err)
+			logger = nil // Continue without structured logging
+		} else {
+			defer logger.Close()
+			logger.SetComponent("retention")
+		}
+
 		st, err := state.New()
 		if err != nil {
+			if logger != nil {
+				logger.Error("state init failed", err, nil)
+			}
 			log.Fatalf("state init: %v", err)
 		}
 
 		// Track start time for reporting
 		startTime := time.Now()
+		
+		if logger != nil {
+			logger.Info("retention started", nil)
+		}
 
 		// Use a shorter timeout for retention - if it takes longer than 2 hours, something is wrong
 		// The connectivity check will fail faster if the repository is unreachable
@@ -431,7 +479,21 @@ func main() {
 
 		res := backup.RunRetention(ctx, cfg)
 		if err := st.SaveLastRetentionRun(res); err != nil {
+			if logger != nil {
+				logger.Warn("failed to save last retention run", map[string]interface{}{
+					"error": err.Error(),
+				})
+			}
 			log.Printf("save last retention run: %v", err)
+		}
+
+		// Ship logs to control plane (non-blocking)
+		if logger != nil && localCfg.DeviceID != "" && localCfg.DeviceAPIKey != "" && localCfg.ServerURL != "" {
+			go func() {
+				if err := logger.ShipLogs(localCfg.ServerURL, localCfg.DeviceAPIKey); err != nil {
+					log.Printf("warning: failed to ship logs: %v", err)
+				}
+			}()
 		}
 
 		// Send reports (non-blocking)
@@ -464,9 +526,29 @@ func main() {
 			_ = report.CleanupOldReports(30 * 24 * time.Hour)
 		}
 
+		// Ship logs to control plane (non-blocking)
+		if logger != nil && localCfg.DeviceID != "" && localCfg.DeviceAPIKey != "" && localCfg.ServerURL != "" {
+			go func() {
+				if err := logger.ShipLogs(localCfg.ServerURL, localCfg.DeviceAPIKey); err != nil {
+					log.Printf("warning: failed to ship logs: %v", err)
+				}
+			}()
+		}
+
 		if res.Status != "success" {
+			if logger != nil {
+				logger.Error("retention failed", fmt.Errorf("%s", res.Error), map[string]interface{}{
+					"duration_ms": res.DurationMS,
+				})
+			}
 			log.Printf("retention failed ❌: %s", res.Error)
 			os.Exit(1)
+		}
+		
+		if logger != nil {
+			logger.Info("retention completed successfully", map[string]interface{}{
+				"duration_ms": res.DurationMS,
+			})
 		}
 		log.Printf("retention ok ✅: duration=%s", res.Duration)
 		return
