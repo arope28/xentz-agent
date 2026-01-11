@@ -245,6 +245,93 @@ func FetchPassword(serverURL, deviceAPIKey string) (string, error) {
 	return passwordResp.Password, nil
 }
 
+// UpdateConfigOnServer updates configuration on the server using the device API key
+func UpdateConfigOnServer(serverURL, deviceAPIKey string, include, exclude []string) (Config, error) {
+	if serverURL == "" {
+		return Config{}, fmt.Errorf("server URL is required")
+	}
+	if deviceAPIKey == "" {
+		return Config{}, fmt.Errorf("device API key is required")
+	}
+
+	// Validate server URL to prevent SSRF
+	if err := validation.ValidateServerURL(serverURL); err != nil {
+		return Config{}, fmt.Errorf("invalid server URL: %w", err)
+	}
+
+	// Prepare request body
+	reqBody := map[string]interface{}{
+		"include": include,
+		"exclude": exclude,
+	}
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return Config{}, fmt.Errorf("marshal request body: %w", err)
+	}
+
+	// Make PUT request to /control/v1/config
+	url := fmt.Sprintf("%s/control/v1/config", serverURL)
+	req, err := http.NewRequest("PUT", url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return Config{}, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", deviceAPIKey))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	// Set timeout
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return Config{}, fmt.Errorf("config update failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		var errMsg bytes.Buffer
+		errMsg.ReadFrom(resp.Body)
+		return Config{}, fmt.Errorf("authentication failed (status %d): invalid or revoked device API key", resp.StatusCode)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		var errMsg bytes.Buffer
+		// Limit error message to prevent information leakage
+		io.CopyN(&errMsg, resp.Body, 512) // Limit to 512 bytes
+		errStr := strings.TrimSpace(errMsg.String())
+		// Remove newlines and limit length
+		errStr = strings.ReplaceAll(errStr, "\n", " ")
+		errStr = strings.ReplaceAll(errStr, "\r", " ")
+		if len(errStr) > 256 {
+			errStr = errStr[:256] + "..."
+		}
+		return Config{}, fmt.Errorf("config update failed (status %d): %s", resp.StatusCode, errStr)
+	}
+
+	// Parse response
+	var cfg Config
+	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
+		return Config{}, fmt.Errorf("decode config response: %w", err)
+	}
+
+	// KILL-SWITCH: Check if device is disabled (enabled=false)
+	if cfg.Enabled != nil && !*cfg.Enabled {
+		return Config{}, fmt.Errorf("device is disabled by server (kill-switch activated)")
+	}
+
+	// Validate required fields
+	if len(cfg.Include) == 0 {
+		return Config{}, fmt.Errorf("server config missing required field: include")
+	}
+	if cfg.Restic.Repository == "" {
+		return Config{}, fmt.Errorf("server config missing required field: restic.repository")
+	}
+
+	return cfg, nil
+}
+
 // EnsurePasswordFile ensures the password file exists and contains the correct password
 // If the file is missing or invalid, it attempts to retrieve it from the server
 func EnsurePasswordFile(cfg Config, serverURL, deviceAPIKey string) error {

@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"xentz-agent/internal/backup"
@@ -26,6 +27,7 @@ Commands:
   backup     Run one backup now (used by scheduler)
   retention  Run retention/prune policy (forget old snapshots)
   status     Show last run status
+  config     Manage backup paths (add/remove include/exclude paths)
 
 Examples:
   # Token-based enrollment (recommended):
@@ -38,6 +40,12 @@ Examples:
   xentz-agent backup --auto-init  # Auto-initialize repository if missing (use with caution)
   xentz-agent retention
   xentz-agent status
+  
+  # Manage backup paths:
+  xentz-agent config --add-include "/Users/me/Documents" --add-include "/Users/me/Pictures"
+  xentz-agent config --remove-include "/Users/me/Pictures"
+  xentz-agent config --add-exclude "*.tmp"
+  xentz-agent config --list-all
 
 Flags (backup):
   --auto-init    Automatically initialize repository if it doesn't exist (default: false)
@@ -55,8 +63,19 @@ Flags (install):
   --exclude       Repeatable. Add exclude globs.
   --config        Config path override (default: ~/.xentz-agent/config.json)
 
+Flags (config):
+  --add-include <path>      Add include path (repeatable). Paths are normalized (expanded and made absolute)
+  --remove-include <path>   Remove include path (repeatable)
+  --add-exclude <pattern>    Add exclude pattern (repeatable)
+  --remove-exclude <pattern> Remove exclude pattern (repeatable)
+  --list-includes            List current include paths
+  --list-excludes            List current exclude patterns
+  --list-all                 List both include paths and exclude patterns
+  --config                   Config path override (default: ~/.xentz-agent/config.json)
+
 Note: With token-based enrollment, configuration (including retention policy) is fetched from the server on each run.
       In legacy mode, retention policy must be configured in config.json before running 'retention' command.
+      The 'config' command updates server configuration for enrolled devices, or local config for legacy mode.
 `)
 }
 
@@ -606,6 +625,268 @@ func main() {
 			fmt.Printf("Last retention:\n  status: %s\n  time:   %s\n  dur:    %s\n  error:  %s\n",
 				lastRetention.Status, lastRetention.TimeUTC, lastRetention.Duration, lastRetention.Error)
 		}
+		return
+
+	case "config":
+		fs := flag.NewFlagSet(cmd, flag.ExitOnError)
+		configPath := fs.String("config", "", "Config path override")
+		var addIncludes multiFlag
+		var removeIncludes multiFlag
+		var addExcludes multiFlag
+		var removeExcludes multiFlag
+		listIncludes := fs.Bool("list-includes", false, "List current include paths")
+		listExcludes := fs.Bool("list-excludes", false, "List current exclude paths")
+		listAll := fs.Bool("list-all", false, "List both include and exclude paths")
+		fs.Var(&addIncludes, "add-include", "Add include path (repeatable)")
+		fs.Var(&removeIncludes, "remove-include", "Remove include path (repeatable)")
+		fs.Var(&addExcludes, "add-exclude", "Add exclude pattern (repeatable)")
+		fs.Var(&removeExcludes, "remove-exclude", "Remove exclude pattern (repeatable)")
+
+		if err := fs.Parse(os.Args[2:]); err != nil {
+			log.Fatalf("parse flags: %v", err)
+		}
+
+		cfgFile, err = config.ResolvePath(*configPath)
+		if err != nil {
+			log.Fatalf("resolve config path: %v", err)
+		}
+
+		// Load local config
+		localCfg, err := config.Read(cfgFile)
+		if err != nil {
+			log.Fatalf("read config: %v", err)
+		}
+
+		// Helper function to normalize path (expand ~, make absolute)
+		normalizePath := func(p string) string {
+			// Expand ~
+			if strings.HasPrefix(p, "~/") {
+				home, err := os.UserHomeDir()
+				if err == nil {
+					p = filepath.Join(home, p[2:])
+				}
+			} else if p == "~" {
+				home, err := os.UserHomeDir()
+				if err == nil {
+					p = home
+				}
+			}
+			// Make absolute
+			if abs, err := filepath.Abs(p); err == nil {
+				return abs
+			}
+			return p
+		}
+
+		// Helper function to check if path exists (for includes)
+		checkPathExists := func(p string) bool {
+			_, err := os.Stat(p)
+			return err == nil
+		}
+
+		// Helper function to remove duplicates from slice
+		removeDuplicates := func(slice []string) []string {
+			seen := make(map[string]bool)
+			result := []string{}
+			for _, item := range slice {
+				if !seen[item] {
+					seen[item] = true
+					result = append(result, item)
+				}
+			}
+			return result
+		}
+
+		// Helper function to remove item from slice
+		removeFromSlice := func(slice []string, item string) []string {
+			result := []string{}
+			for _, s := range slice {
+				if s != item {
+					result = append(result, s)
+				}
+			}
+			return result
+		}
+
+		// If just listing, show current config and exit
+		if *listAll || *listIncludes || *listExcludes {
+			var cfg config.Config
+			if localCfg.DeviceAPIKey != "" && localCfg.ServerURL != "" {
+				// Fetch from server
+				fetchedCfg, fetchErr := config.LoadWithFallback(localCfg.ServerURL, localCfg.DeviceAPIKey)
+				if fetchErr != nil {
+					log.Printf("warning: failed to fetch config from server: %v", fetchErr)
+					log.Println("Showing local config instead...")
+					cfg = localCfg
+				} else {
+					cfg = fetchedCfg
+				}
+			} else {
+				cfg = localCfg
+			}
+
+			if *listAll || *listIncludes {
+				fmt.Println("Include paths:")
+				if len(cfg.Include) == 0 {
+					fmt.Println("  (none)")
+				} else {
+					for _, p := range cfg.Include {
+						fmt.Printf("  %s\n", p)
+					}
+				}
+			}
+
+			if *listAll || *listExcludes {
+				if *listAll {
+					fmt.Println("")
+				}
+				fmt.Println("Exclude patterns:")
+				if len(cfg.Exclude) == 0 {
+					fmt.Println("  (none)")
+				} else {
+					for _, p := range cfg.Exclude {
+						fmt.Printf("  %s\n", p)
+					}
+				}
+			}
+			return
+		}
+
+		// Check if any operations are requested
+		if len(addIncludes) == 0 && len(removeIncludes) == 0 && len(addExcludes) == 0 && len(removeExcludes) == 0 {
+			log.Fatal("No operations specified. Use --add-include, --remove-include, --add-exclude, --remove-exclude, or --list-all")
+		}
+
+		// Determine if device is enrolled
+		isEnrolled := localCfg.DeviceAPIKey != "" && localCfg.ServerURL != ""
+
+		var currentCfg config.Config
+		if isEnrolled {
+			// Fetch current config from server
+			fetchedCfg, fetchErr := config.LoadWithFallback(localCfg.ServerURL, localCfg.DeviceAPIKey)
+			if fetchErr != nil {
+				log.Fatalf("failed to fetch config from server: %v", fetchErr)
+			}
+			currentCfg = fetchedCfg
+		} else {
+			// Use local config
+			currentCfg = localCfg
+		}
+
+		// Apply operations to include paths
+		newIncludes := make([]string, len(currentCfg.Include))
+		copy(newIncludes, currentCfg.Include)
+
+		// Add include paths
+		for _, path := range addIncludes {
+			normalized := normalizePath(path)
+			// Check for duplicates
+			duplicate := false
+			for _, existing := range newIncludes {
+				if existing == normalized {
+					duplicate = true
+					log.Printf("warning: include path already exists: %s", normalized)
+					break
+				}
+			}
+			if !duplicate {
+				// Warn if path doesn't exist (but allow it - user might create it later)
+				if !checkPathExists(normalized) {
+					log.Printf("warning: include path does not exist: %s (will be added anyway)", normalized)
+				}
+				newIncludes = append(newIncludes, normalized)
+			}
+		}
+
+		// Remove include paths
+		for _, path := range removeIncludes {
+			normalized := normalizePath(path)
+			found := false
+			for _, existing := range newIncludes {
+				if existing == normalized {
+					found = true
+					break
+				}
+			}
+			if found {
+				newIncludes = removeFromSlice(newIncludes, normalized)
+				log.Printf("removed include path: %s", normalized)
+			} else {
+				log.Printf("warning: include path not found: %s", normalized)
+			}
+		}
+
+		// Remove duplicates
+		newIncludes = removeDuplicates(newIncludes)
+
+		// Apply operations to exclude paths
+		newExcludes := make([]string, len(currentCfg.Exclude))
+		copy(newExcludes, currentCfg.Exclude)
+
+		// Add exclude patterns
+		for _, pattern := range addExcludes {
+			// Check for duplicates
+			duplicate := false
+			for _, existing := range newExcludes {
+				if existing == pattern {
+					duplicate = true
+					log.Printf("warning: exclude pattern already exists: %s", pattern)
+					break
+				}
+			}
+			if !duplicate {
+				newExcludes = append(newExcludes, pattern)
+			}
+		}
+
+		// Remove exclude patterns
+		for _, pattern := range removeExcludes {
+			found := false
+			for _, existing := range newExcludes {
+				if existing == pattern {
+					found = true
+					break
+				}
+			}
+			if found {
+				newExcludes = removeFromSlice(newExcludes, pattern)
+				log.Printf("removed exclude pattern: %s", pattern)
+			} else {
+				log.Printf("warning: exclude pattern not found: %s", pattern)
+			}
+		}
+
+		// Remove duplicates
+		newExcludes = removeDuplicates(newExcludes)
+
+		// Validate: must have at least one include path
+		if len(newIncludes) == 0 {
+			log.Fatal("error: at least one include path is required")
+		}
+
+		// Update config
+		if isEnrolled {
+			// Update on server
+			log.Println("Updating configuration on server...")
+			updatedCfg, err := config.UpdateConfigOnServer(localCfg.ServerURL, localCfg.DeviceAPIKey, newIncludes, newExcludes)
+			if err != nil {
+				log.Fatalf("failed to update config on server: %v", err)
+			}
+			log.Println("✓ Configuration updated on server")
+			log.Printf("  Include paths: %d", len(updatedCfg.Include))
+			log.Printf("  Exclude patterns: %d", len(updatedCfg.Exclude))
+		} else {
+			// Update local config
+			currentCfg.Include = newIncludes
+			currentCfg.Exclude = newExcludes
+			if err := config.Write(cfgFile, currentCfg); err != nil {
+				log.Fatalf("failed to write config: %v", err)
+			}
+			log.Println("✓ Configuration updated locally")
+			log.Printf("  Include paths: %d", len(newIncludes))
+			log.Printf("  Exclude patterns: %d", len(newExcludes))
+		}
+
 		return
 
 	default:
