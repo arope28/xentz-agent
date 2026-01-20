@@ -1,7 +1,8 @@
 @echo off
 REM build.bat - Build executables for Windows (run from Windows or WSL)
 
-set VERSION=%date:~-4,4%%date:~-10,2%%date:~-7,2%
+for /f "tokens=2 delims==" %%A in ('wmic os get LocalDateTime /value') do set DTS=%%A
+set VERSION=%DTS:~0,8%
 set DIST_DIR=dist
 if not exist "%DIST_DIR%" mkdir "%DIST_DIR%"
 
@@ -49,7 +50,7 @@ echo.
 echo Generating checksums...
 if exist "%DIST_DIR%\checksums.txt" del "%DIST_DIR%\checksums.txt"
 for %%F in ("%DIST_DIR%\xentz-agent*") do (
-    for /f "tokens=1" %%H in ('powershell -NoProfile -Command "(Get-FileHash -Algorithm SHA256 -Path ''%%F'').Hash"') do (
+    for /f "tokens=1" %%H in ('powershell -NoProfile -Command "(Get-FileHash -Algorithm SHA256 -LiteralPath \"%%F\").Hash"') do (
         echo %%H  %%~nxF>> "%DIST_DIR%\checksums.txt"
     )
 )
