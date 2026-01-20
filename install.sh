@@ -11,8 +11,32 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Configuration - Update these URLs to point to your release binaries
-BASE_URL="${XENTZ_AGENT_BASE_URL:-https://github.com/arope28/xentz-agent/releases/latest/download}"
 BINARY_NAME="xentz-agent"
+VERSION="${XENTZ_AGENT_VERSION:-latest}"
+MODE="${XENTZ_AGENT_MODE:-user}"
+
+# Parse args
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --version)
+      VERSION="$2"
+      shift 2
+      ;;
+    --mode)
+      MODE="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+if [ "$VERSION" = "latest" ]; then
+  BASE_URL="${XENTZ_AGENT_BASE_URL:-https://github.com/arope28/xentz-agent/releases/latest/download}"
+else
+  BASE_URL="${XENTZ_AGENT_BASE_URL:-https://github.com/arope28/xentz-agent/releases/download/v${VERSION}}"
+fi
 
 echo -e "${GREEN}xentz-agent Installer${NC}"
 echo "========================"
@@ -80,6 +104,7 @@ fi
 
 echo "Detected: $OS ($ARCH)"
 echo "Install directory: $INSTALL_DIR"
+echo "Version: $VERSION"
 echo ""
 
 # Check for restic
@@ -206,12 +231,40 @@ echo ""
 
 # Download to temporary location first
 TEMP_BINARY=$(mktemp)
-trap "rm -f $TEMP_BINARY" EXIT
+TEMP_CHECKSUMS=$(mktemp)
+trap "rm -f $TEMP_BINARY $TEMP_CHECKSUMS" EXIT
 
 echo "Downloading xentz-agent..."
 if ! curl -fsSL -o "$TEMP_BINARY" "$DOWNLOAD_URL"; then
     echo -e "${RED}Error: Failed to download binary${NC}"
     echo "Please check that the release exists at: $DOWNLOAD_URL"
+    exit 1
+fi
+
+echo "Downloading checksums..."
+CHECKSUM_URL="${BASE_URL}/checksums.txt"
+if ! curl -fsSL -o "$TEMP_CHECKSUMS" "$CHECKSUM_URL"; then
+    echo -e "${RED}Error: Failed to download checksums${NC}"
+    exit 1
+fi
+
+EXPECTED_SUM=$(grep " $BINARY_FILE\$" "$TEMP_CHECKSUMS" | awk '{print $1}')
+if [ -z "$EXPECTED_SUM" ]; then
+    echo -e "${RED}Error: Checksum not found for ${BINARY_FILE}${NC}"
+    exit 1
+fi
+
+if command -v sha256sum &> /dev/null; then
+    ACTUAL_SUM=$(sha256sum "$TEMP_BINARY" | awk '{print $1}')
+elif command -v shasum &> /dev/null; then
+    ACTUAL_SUM=$(shasum -a 256 "$TEMP_BINARY" | awk '{print $1}')
+else
+    echo -e "${YELLOW}Warning: sha256sum not available, skipping checksum verification${NC}"
+    ACTUAL_SUM="$EXPECTED_SUM"
+fi
+
+if [ "$EXPECTED_SUM" != "$ACTUAL_SUM" ]; then
+    echo -e "${RED}Error: Checksum verification failed${NC}"
     exit 1
 fi
 

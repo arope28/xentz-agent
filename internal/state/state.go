@@ -6,19 +6,21 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"xentz-agent/internal/paths"
 )
 
 type LastRun struct {
-	Status        string `json:"status"` // success|error
-	TimeUTC       string `json:"time_utc"`
-	Duration      string `json:"duration"`
-	DurationMS    int64  `json:"duration_ms,omitempty"`    // Duration in milliseconds
-	BytesSent     int64  `json:"bytes_sent"`
-	FilesTotal    int64  `json:"files_total,omitempty"`    // Total files processed
-	BytesTotal    int64  `json:"bytes_total,omitempty"`    // Total bytes processed (logical size)
-	DataAddedBytes int64 `json:"data_added_bytes,omitempty"` // Data actually added/uploaded
-	SnapshotID    string `json:"snapshot_id,omitempty"`     // Restic snapshot ID
-	Error         string `json:"error,omitempty"`
+	Status         string `json:"status"` // success|error
+	TimeUTC        string `json:"time_utc"`
+	Duration       string `json:"duration"`
+	DurationMS     int64  `json:"duration_ms,omitempty"` // Duration in milliseconds
+	BytesSent      int64  `json:"bytes_sent"`
+	FilesTotal     int64  `json:"files_total,omitempty"`      // Total files processed
+	BytesTotal     int64  `json:"bytes_total,omitempty"`      // Total bytes processed (logical size)
+	DataAddedBytes int64  `json:"data_added_bytes,omitempty"` // Data actually added/uploaded
+	SnapshotID     string `json:"snapshot_id,omitempty"`      // Restic snapshot ID
+	Error          string `json:"error,omitempty"`
 }
 
 type Store struct {
@@ -26,15 +28,14 @@ type Store struct {
 }
 
 func New() (*Store, error) {
-	home, err := os.UserHomeDir()
+	stateDir, err := paths.StateDir("")
 	if err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(home, ".xentz-agent")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, err
 	}
-	return &Store{dir: dir}, nil
+	return &Store{dir: stateDir}, nil
 }
 
 func (s *Store) lastRunPath() string {
@@ -90,12 +91,12 @@ func NewLastRunSuccessWithStats(d time.Duration, filesTotal, bytesTotal, dataAdd
 
 func NewLastRunError(d time.Duration, bytes int64, msg string) LastRun {
 	return LastRun{
-		Status:    "error",
-		TimeUTC:   time.Now().UTC().Format(time.RFC3339),
-		Duration:  d.String(),
+		Status:     "error",
+		TimeUTC:    time.Now().UTC().Format(time.RFC3339),
+		Duration:   d.String(),
 		DurationMS: d.Milliseconds(),
-		BytesSent: bytes,
-		Error:     msg,
+		BytesSent:  bytes,
+		Error:      msg,
 	}
 }
 

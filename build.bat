@@ -43,3 +43,17 @@ echo.
 echo Build complete! Executables are in .\%DIST_DIR%\
 dir /b "%DIST_DIR%\xentz-agent*"
 
+
+:checksums
+echo.
+echo Generating checksums...
+if exist "%DIST_DIR%\checksums.txt" del "%DIST_DIR%\checksums.txt"
+for %%F in ("%DIST_DIR%\xentz-agent*") do (
+    for /f "tokens=1" %%H in ('powershell -NoProfile -Command "(Get-FileHash -Algorithm SHA256 -Path ''%%F'').Hash"') do (
+        echo %%H  %%~nxF>> "%DIST_DIR%\checksums.txt"
+    )
+)
+if exist "%DIST_DIR%\checksums.txt" (
+    echo Checksums written to %DIST_DIR%\checksums.txt
+)
+

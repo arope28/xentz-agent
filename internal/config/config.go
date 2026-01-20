@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"xentz-agent/internal/paths"
 )
 
 type Schedule struct {
@@ -12,7 +14,7 @@ type Schedule struct {
 }
 type Restic struct {
 	Repository   string `json:"repository"`              // e.g. "rest:https://.../restic/dr-core-backups-demo/client-123/"
-	PasswordFile string `json:"password_file,omitempty"` // e.g. "~/.xentz-agent/restic.pw"
+	PasswordFile string `json:"password_file,omitempty"` // e.g. "<CONFIG_DIR>/restic.pw"
 }
 
 type Retention struct {
@@ -28,19 +30,21 @@ type Retention struct {
 
 type Config struct {
 	// Enrollment fields (server-issued identifiers)
-	InstallToken string `json:"install_token,omitempty"` // Temporary token for enrollment (not stored after enrollment)
-	TenantID     string `json:"tenant_id,omitempty"`     // Server-assigned tenant/customer ID
-	DeviceID     string `json:"device_id,omitempty"`     // Server-assigned device identifier
-	DeviceAPIKey string `json:"device_api_key,omitempty"` // Long-lived API key for fetching config
-	UserID       string `json:"user_id,omitempty"`       // User identifier (username or UUID)
+	InstallToken   string `json:"install_token,omitempty"`   // Temporary token for enrollment (not stored after enrollment)
+	TenantID       string `json:"tenant_id,omitempty"`       // Server-assigned tenant/customer ID
+	DeviceID       string `json:"device_id,omitempty"`       // Server-assigned device identifier
+	DeviceAPIKey   string `json:"device_api_key,omitempty"`  // Long-lived API key for fetching config
+	UserID         string `json:"user_id,omitempty"`         // User identifier (username or UUID)
+	ConfigRevision int    `json:"config_revision,omitempty"` // Server-issued config revision
 
 	// Control plane and scheduling
-	ServerURL string   `json:"server_url,omitempty"` // Base URL for control plane
-	Enabled   *bool    `json:"enabled,omitempty"`    // Kill-switch: if false, agent must stop all operations (server-controlled)
-	Schedule  Schedule `json:"schedule"`
-	Include   []string `json:"include"`
-	Exclude   []string `json:"exclude,omitempty"`
-	Restic    Restic   `json:"restic"`
+	ServerURL string    `json:"server_url,omitempty"` // Base URL for control plane
+	Enabled   *bool     `json:"enabled,omitempty"`    // Kill-switch: if false, agent must stop all operations (server-controlled)
+	Mode      string    `json:"mode,omitempty"`       // "user" or "system"
+	Schedule  Schedule  `json:"schedule"`
+	Include   []string  `json:"include"`
+	Exclude   []string  `json:"exclude,omitempty"`
+	Restic    Restic    `json:"restic"`
 	Retention Retention `json:"retention,omitempty"`
 }
 
@@ -48,11 +52,11 @@ func ResolvePath(override string) (string, error) {
 	if override != "" {
 		return override, nil
 	}
-	home, err := os.UserHomeDir()
+	dir, err := paths.ConfigDir("")
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".xentz-agent", "config.json"), nil
+	return filepath.Join(dir, "config.json"), nil
 }
 
 func EnsureDirFor(path string) error {
@@ -85,11 +89,11 @@ func Read(path string) (Config, error) {
 
 // GetCachedConfigPath returns the path for the cached config file
 func GetCachedConfigPath() (string, error) {
-	home, err := os.UserHomeDir()
+	dir, err := paths.ConfigDir("")
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".xentz-agent", "config-cached.json"), nil
+	return filepath.Join(dir, "config-cached.json"), nil
 }
 
 // WriteCached writes the config to the cached config file

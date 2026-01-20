@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"xentz-agent/internal/config"
+	"xentz-agent/internal/paths"
 )
 
 const (
@@ -47,7 +48,10 @@ func LinuxSystemdInstall(configPath string) error {
 		return err
 	}
 
-	logDir := filepath.Join(home, ".xentz-agent", "logs")
+	logDir, err := paths.LogDir("")
+	if err != nil {
+		return fmt.Errorf("resolve log dir: %w", err)
+	}
 	if err := os.MkdirAll(logDir, 0o700); err != nil {
 		return err
 	}
@@ -61,6 +65,108 @@ func LinuxSystemdInstall(configPath string) error {
 
 	// Fallback to cron
 	return installCron(exePath, configPath, hour, minute, home)
+}
+
+// LinuxSystemdInstallSystem installs system-level systemd unit and timer
+func LinuxSystemdInstallSystem(configPath string) error {
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("LinuxSystemdInstallSystem can only run on Linux")
+	}
+
+	cfg, err := config.Read(configPath)
+	if err != nil {
+		return err
+	}
+	hour, minute, err := parseHHMM(cfg.Schedule.DailyAt)
+	if err != nil {
+		return fmt.Errorf("invalid --daily-at (%q): %w", cfg.Schedule.DailyAt, err)
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if !filepath.IsAbs(exePath) {
+		absPath, err := filepath.Abs(exePath)
+		if err != nil {
+			return fmt.Errorf("get absolute path: %w", err)
+		}
+		exePath = absPath
+	}
+
+	serviceDir := "/etc/systemd/system"
+	serviceFile := filepath.Join(serviceDir, linuxServiceName+".service")
+	timerFile := filepath.Join(serviceDir, linuxServiceName+".timer")
+
+	serviceContent := buildSystemdServiceSystem(exePath, configPath)
+	timerContent := buildSystemdTimer(hour, minute)
+
+	if err := os.WriteFile(serviceFile, []byte(serviceContent), 0o644); err != nil {
+		return fmt.Errorf("write system service: %w", err)
+	}
+	if err := os.WriteFile(timerFile, []byte(timerContent), 0o644); err != nil {
+		return fmt.Errorf("write system timer: %w", err)
+	}
+
+	reloadCmd := exec.Command("systemctl", "daemon-reload")
+	if output, err := reloadCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("reload systemd daemon: %w\noutput: %s", err, string(output))
+	}
+
+	enableCmd := exec.Command("systemctl", "enable", linuxServiceName+".timer")
+	if output, err := enableCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("enable systemd timer: %w\noutput: %s", err, string(output))
+	}
+
+	startCmd := exec.Command("systemctl", "start", linuxServiceName+".timer")
+	if output, err := startCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("start systemd timer: %w\noutput: %s", err, string(output))
+	}
+
+	_ = exec.Command("systemctl", "start", linuxServiceName+".service").Run()
+	return nil
+}
+
+// LinuxSystemdUninstall removes user-level systemd units or cron entry
+func LinuxSystemdUninstall() error {
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("LinuxSystemdUninstall can only run on Linux")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	serviceDir := filepath.Join(home, ".config", "systemd", "user")
+	serviceFile := filepath.Join(serviceDir, linuxServiceName+".service")
+	timerFile := filepath.Join(serviceDir, linuxServiceName+".timer")
+
+	_ = exec.Command("systemctl", "--user", "stop", linuxServiceName+".timer").Run()
+	_ = exec.Command("systemctl", "--user", "disable", linuxServiceName+".timer").Run()
+	_ = exec.Command("systemctl", "--user", "stop", linuxServiceName+".service").Run()
+	_ = exec.Command("systemctl", "--user", "daemon-reload").Run()
+	_ = os.Remove(serviceFile)
+	_ = os.Remove(timerFile)
+
+	// Remove cron entry if present
+	_ = removeCronEntries()
+	return nil
+}
+
+// LinuxSystemdUninstallSystem removes system-level systemd units
+func LinuxSystemdUninstallSystem() error {
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("LinuxSystemdUninstallSystem can only run on Linux")
+	}
+	serviceFile := filepath.Join("/etc/systemd/system", linuxServiceName+".service")
+	timerFile := filepath.Join("/etc/systemd/system", linuxServiceName+".timer")
+
+	_ = exec.Command("systemctl", "stop", linuxServiceName+".timer").Run()
+	_ = exec.Command("systemctl", "disable", linuxServiceName+".timer").Run()
+	_ = exec.Command("systemctl", "stop", linuxServiceName+".service").Run()
+	_ = os.Remove(serviceFile)
+	_ = os.Remove(timerFile)
+	_ = exec.Command("systemctl", "daemon-reload").Run()
+	return nil
 }
 
 func hasSystemd() bool {
@@ -185,6 +291,30 @@ WantedBy=default.target
 `, pathEnvEscaped, exePathEscaped, configPathEscaped, stdoutPathEscaped, stderrPathEscaped)
 }
 
+func buildSystemdServiceSystem(exePath, configPath string) string {
+	exePathEscaped := escapeSystemdPath(exePath)
+	configPathEscaped := escapeSystemdPath(configPath)
+
+	// Build PATH with common system locations
+	pathEnv := "/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin:/snap/bin"
+	pathEnvEscaped := escapeSystemdPath(pathEnv)
+
+	return fmt.Sprintf(`[Unit]
+Description=xentz-agent backup service
+After=network.target
+
+[Service]
+Type=oneshot
+Environment="PATH=%s"
+ExecStart=%s backup --config %s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+`, pathEnvEscaped, exePathEscaped, configPathEscaped)
+}
+
 func buildSystemdTimer(hour, minute int) string {
 	return fmt.Sprintf(`[Unit]
 Description=xentz-agent backup timer
@@ -224,7 +354,11 @@ func installCron(exePath, configPath string, hour, minute int, home string) erro
 	// Escape paths for cron (wrap in single quotes)
 	exePathEscaped := escapeCronPath(exePath)
 	configPathEscaped := escapeCronPath(configPath)
-	logDirEscaped := escapeCronPath(filepath.Join(home, ".xentz-agent", "logs"))
+	logDir, err := paths.LogDir("")
+	if err != nil {
+		return fmt.Errorf("resolve log dir: %w", err)
+	}
+	logDirEscaped := escapeCronPath(logDir)
 
 	// Build PATH with common restic installation locations
 	// Include system paths and user paths
@@ -268,5 +402,26 @@ func installCron(exePath, configPath string, hour, minute int, home string) erro
 		return fmt.Errorf("write crontab: %w\noutput: %s", err, string(output))
 	}
 
+	return nil
+}
+
+func removeCronEntries() error {
+	crontabCmd := exec.Command("crontab", "-l")
+	currentCron, err := crontabCmd.Output()
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(string(currentCron), "\n")
+	var newLines []string
+	for _, line := range lines {
+		if strings.Contains(line, linuxServiceName) || strings.Contains(line, "xentz-agent") {
+			continue
+		}
+		newLines = append(newLines, line)
+	}
+	newCron := strings.Join(newLines, "\n")
+	applyCmd := exec.Command("crontab", "-")
+	applyCmd.Stdin = strings.NewReader(newCron)
+	_ = applyCmd.Run()
 	return nil
 }

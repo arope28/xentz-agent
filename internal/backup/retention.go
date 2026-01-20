@@ -17,8 +17,13 @@ func RunRetention(ctx context.Context, cfg config.Config) state.LastRun {
 	if cfg.Restic.Repository == "" {
 		return state.NewLastRunError(time.Since(start), 0, "restic.repository is required")
 	}
+	var resticPassword string
 	if cfg.Restic.PasswordFile == "" {
-		return state.NewLastRunError(time.Since(start), 0, "restic.password_file is required")
+		pw, err := config.GetResticPassword(cfg)
+		if err != nil {
+			return state.NewLastRunError(time.Since(start), 0, "restic password is required")
+		}
+		resticPassword = pw
 	}
 	if _, err := exec.LookPath("restic"); err != nil {
 		return state.NewLastRunError(time.Since(start), 0, "restic not found in PATH")
@@ -29,7 +34,7 @@ func RunRetention(ctx context.Context, cfg config.Config) state.LastRun {
 	os.Stderr.WriteString("Checking repository connectivity...\n")
 	connectCtx, connectCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer connectCancel()
-	if err := checkRepositoryConnectivity(connectCtx, cfg); err != nil {
+	if err := checkRepositoryConnectivity(connectCtx, cfg, resticPassword); err != nil {
 		if connectCtx.Err() == context.DeadlineExceeded {
 			return state.NewLastRunError(time.Since(start), 0, "repository connection timeout: repository server appears to be unreachable or down\nCheck that the repository server is online and accessible.")
 		}
@@ -66,10 +71,7 @@ func RunRetention(ctx context.Context, cfg config.Config) state.LastRun {
 	}
 
 	cmd := exec.CommandContext(ctx, "restic", args...)
-	cmd.Env = append(cmd.Environ(),
-		"RESTIC_REPOSITORY="+cfg.Restic.Repository,
-		"RESTIC_PASSWORD_FILE="+expandHome(cfg.Restic.PasswordFile),
-	)
+	cmd.Env = append(cmd.Environ(), resticEnv(cfg, resticPassword)...)
 
 	// Stream output to both terminal and buffer for error reporting
 	// This allows users to see progress during long-running prune operations
@@ -105,14 +107,11 @@ func itoa(i int) string {
 // expandHome and tail are defined in backup.go (same package)
 
 // checkRepositoryConnectivity verifies the repository is reachable with a quick test
-func checkRepositoryConnectivity(ctx context.Context, cfg config.Config) error {
+func checkRepositoryConnectivity(ctx context.Context, cfg config.Config, resticPassword string) error {
 	// Use a quick "snapshots" command with --last 1 to test connectivity
 	// This is faster than "cat config" and will fail quickly if unreachable
 	cmd := exec.CommandContext(ctx, "restic", "snapshots", "--last", "1")
-	cmd.Env = append(cmd.Environ(),
-		"RESTIC_REPOSITORY="+cfg.Restic.Repository,
-		"RESTIC_PASSWORD_FILE="+expandHome(cfg.Restic.PasswordFile),
-	)
+	cmd.Env = append(cmd.Environ(), resticEnv(cfg, resticPassword)...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out

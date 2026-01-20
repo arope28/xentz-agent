@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"xentz-agent/internal/paths"
 )
 
 // LogLevel represents the log level
@@ -43,12 +45,10 @@ type Logger struct {
 
 // NewLogger creates a new logger instance
 func NewLogger(tenantID, deviceID string) (*Logger, error) {
-	home, err := os.UserHomeDir()
+	logDir, err := paths.LogDir("")
 	if err != nil {
-		return nil, fmt.Errorf("get home directory: %w", err)
+		return nil, fmt.Errorf("resolve log dir: %w", err)
 	}
-
-	logDir := filepath.Join(home, ".xentz-agent", "logs")
 	if err := os.MkdirAll(logDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create log directory: %w", err)
 	}
@@ -163,12 +163,12 @@ func (l *Logger) Close() error {
 func sanitizeFields(fields map[string]interface{}) map[string]interface{} {
 	sanitized := make(map[string]interface{})
 	sensitiveKeys := map[string]bool{
-		"password":      true,
-		"api_key":       true,
+		"password":       true,
+		"api_key":        true,
 		"device_api_key": true,
-		"token":         true,
-		"install_token": true,
-		"secret":        true,
+		"token":          true,
+		"install_token":  true,
+		"secret":         true,
 	}
 
 	for k, v := range fields {

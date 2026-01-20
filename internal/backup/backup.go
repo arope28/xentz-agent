@@ -25,8 +25,13 @@ func Run(ctx context.Context, cfg config.Config, autoInit bool) state.LastRun {
 	if cfg.Restic.Repository == "" {
 		return state.NewLastRunError(time.Since(start), 0, "restic.repository is required")
 	}
+	var resticPassword string
 	if cfg.Restic.PasswordFile == "" {
-		return state.NewLastRunError(time.Since(start), 0, "restic.password_file is required (MVP)")
+		pw, err := config.GetResticPassword(cfg)
+		if err != nil {
+			return state.NewLastRunError(time.Since(start), 0, "restic password is required")
+		}
+		resticPassword = pw
 	}
 
 	// Ensure restic exists
@@ -36,7 +41,7 @@ func Run(ctx context.Context, cfg config.Config, autoInit bool) state.LastRun {
 
 	// Check if repository exists and is initialized
 	// Only auto-init if explicitly enabled (prevents accidental repo creation)
-	if err := checkOrInitRepo(ctx, cfg, autoInit); err != nil {
+	if err := checkOrInitRepo(ctx, cfg, autoInit, resticPassword); err != nil {
 		return state.NewLastRunError(time.Since(start), 0, "repo init check failed: "+err.Error())
 	}
 
@@ -50,10 +55,7 @@ func Run(ctx context.Context, cfg config.Config, autoInit bool) state.LastRun {
 	args = append(args, cfg.Include...)
 
 	cmd := exec.CommandContext(ctx, "restic", args...)
-	cmd.Env = append(cmd.Environ(),
-		"RESTIC_REPOSITORY="+cfg.Restic.Repository,
-		"RESTIC_PASSWORD_FILE="+expandHome(cfg.Restic.PasswordFile),
-	)
+	cmd.Env = append(cmd.Environ(), resticEnv(cfg, resticPassword)...)
 
 	var out bytes.Buffer
 	var jsonOut bytes.Buffer
@@ -88,13 +90,10 @@ func Run(ctx context.Context, cfg config.Config, autoInit bool) state.LastRun {
 // checkOrInitRepo checks if the repository exists and is initialized.
 // If autoInit is true and the repo doesn't exist, it will attempt to initialize it.
 // If autoInit is false and the repo doesn't exist, it returns an error.
-func checkOrInitRepo(ctx context.Context, cfg config.Config, autoInit bool) error {
+func checkOrInitRepo(ctx context.Context, cfg config.Config, autoInit bool, resticPassword string) error {
 	// "restic cat config" succeeds only if repo exists and is initialized
 	cmd := exec.CommandContext(ctx, "restic", "cat", "config")
-	cmd.Env = append(cmd.Environ(),
-		"RESTIC_REPOSITORY="+cfg.Restic.Repository,
-		"RESTIC_PASSWORD_FILE="+expandHome(cfg.Restic.PasswordFile),
-	)
+	cmd.Env = append(cmd.Environ(), resticEnv(cfg, resticPassword)...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -141,6 +140,16 @@ func checkOrInitRepo(ctx context.Context, cfg config.Config, autoInit bool) erro
 		return fmt.Errorf("failed to initialize repository: %w\noutput: %s", err, initErrStr)
 	}
 	return nil
+}
+
+func resticEnv(cfg config.Config, resticPassword string) []string {
+	env := []string{"RESTIC_REPOSITORY=" + cfg.Restic.Repository}
+	if resticPassword != "" {
+		env = append(env, "RESTIC_PASSWORD="+resticPassword)
+	} else {
+		env = append(env, "RESTIC_PASSWORD_FILE="+expandHome(cfg.Restic.PasswordFile))
+	}
+	return env
 }
 
 func expandHome(p string) string {

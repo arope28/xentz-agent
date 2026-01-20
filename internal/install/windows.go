@@ -8,6 +8,8 @@ import (
 	"runtime"
 
 	"xentz-agent/internal/config"
+	"xentz-agent/internal/paths"
+	windowsservice "xentz-agent/internal/service/windows"
 )
 
 const (
@@ -33,7 +35,6 @@ func WindowsTaskSchedulerInstall(configPath string) error {
 	if err != nil {
 		return err
 	}
-	// Convert to Windows path format if needed
 	exePath = filepath.Clean(exePath)
 	if !filepath.IsAbs(exePath) {
 		absPath, err := filepath.Abs(exePath)
@@ -48,53 +49,71 @@ func WindowsTaskSchedulerInstall(configPath string) error {
 		return err
 	}
 
-	logDir := filepath.Join(home, ".xentz-agent", "logs")
+	logDir, err := paths.LogDir("")
+	if err != nil {
+		return fmt.Errorf("resolve log dir: %w", err)
+	}
 	if err := os.MkdirAll(logDir, 0o700); err != nil {
 		return err
 	}
 	stdoutPath := filepath.Join(logDir, "agent.out.log")
 	stderrPath := filepath.Join(logDir, "agent.err.log")
 
-	// Build PATH with common restic installation locations on Windows
-	// Include user's local bin, Go bin, and system paths
 	goBin := filepath.Join(home, "go", "bin")
 	localBin := filepath.Join(home, "AppData", "Local", "Programs")
-	// Windows PATH uses semicolons as separators
-	// Include common installation locations: user's Go bin, local programs, and system PATH
 	pathEnv := fmt.Sprintf("%s;%s;%%PATH%%", goBin, localBin)
 
-	// Create a batch file wrapper to handle logging
-	batchFile := filepath.Join(home, ".xentz-agent", "run-backup.bat")
+	stateDir, err := paths.StateDir("")
+	if err != nil {
+		return fmt.Errorf("resolve state dir: %w", err)
+	}
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return err
+	}
+	batchFile := filepath.Join(stateDir, "run-backup.bat")
 	batchContent := fmt.Sprintf(`@echo off
 set PATH=%s
 "%s" backup --config "%s" >> "%s" 2>> "%s"
 `, pathEnv, exePath, configPath, stdoutPath, stderrPath)
-	
+
 	if err := os.WriteFile(batchFile, []byte(batchContent), 0o644); err != nil {
 		return fmt.Errorf("write batch file: %w", err)
 	}
 
-	// Delete existing task if it exists (ignore errors)
 	_ = exec.Command("schtasks", "/Delete", "/TN", windowsTaskName, "/F").Run()
-
-	// Create new scheduled task
-	// Format: schtasks /Create /TN "TaskName" /TR "Command" /SC DAILY /ST HH:MM
 	createCmd := exec.Command("schtasks", "/Create",
 		"/TN", windowsTaskName,
 		"/TR", fmt.Sprintf(`"%s"`, batchFile),
 		"/SC", "DAILY",
 		"/ST", fmt.Sprintf("%02d:%02d", hour, minute),
-		"/F", // Force creation (overwrite if exists)
+		"/F",
 	)
-
-	output, err := createCmd.CombinedOutput()
-	if err != nil {
+	if output, err := createCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("create scheduled task: %w\noutput: %s", err, string(output))
 	}
-
-	// Run the task immediately to test
 	_ = exec.Command("schtasks", "/Run", "/TN", windowsTaskName).Run()
-
 	return nil
 }
 
+func WindowsTaskSchedulerUninstall() error {
+	if runtime.GOOS != "windows" {
+		return fmt.Errorf("WindowsTaskSchedulerUninstall can only run on Windows")
+	}
+	_ = exec.Command("schtasks", "/Delete", "/TN", windowsTaskName, "/F").Run()
+	return nil
+}
+
+// WindowsServiceInstall installs a Windows Service for system mode.
+func WindowsServiceInstall(configPath string) error {
+	if runtime.GOOS != "windows" {
+		return fmt.Errorf("WindowsServiceInstall can only run on Windows")
+	}
+	return windowsservice.InstallService(configPath)
+}
+
+func WindowsServiceUninstall() error {
+	if runtime.GOOS != "windows" {
+		return fmt.Errorf("WindowsServiceUninstall can only run on Windows")
+	}
+	return windowsservice.UninstallService()
+}

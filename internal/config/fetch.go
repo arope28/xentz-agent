@@ -332,92 +332,65 @@ func UpdateConfigOnServer(serverURL, deviceAPIKey string, include, exclude []str
 	return cfg, nil
 }
 
-// EnsurePasswordFile ensures the password file exists and contains the correct password
-// If the file is missing or invalid, it attempts to retrieve it from the server
+// EnsurePasswordFile ensures the restic password is available in secretstore.
+// It migrates from a legacy password file if present, or fetches from server.
 func EnsurePasswordFile(cfg Config, serverURL, deviceAPIKey string) error {
-	if cfg.Restic.PasswordFile == "" {
-		return fmt.Errorf("password_file not configured")
-	}
-
-	// Expand home directory in path
-	passwordPath := cfg.Restic.PasswordFile
-	if strings.HasPrefix(passwordPath, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("get home directory: %w", err)
-		}
-		passwordPath = filepath.Join(home, strings.TrimPrefix(passwordPath, "~/"))
-	}
-
-	// Check if password file exists and is readable
-	_, err := os.Stat(passwordPath)
-	passwordExists := err == nil
-
-	// If password file exists, validate it by attempting to read it
-	if passwordExists {
-		data, err := os.ReadFile(passwordPath)
-		if err != nil {
-			log.Printf("warning: password file exists but cannot be read: %v", err)
-			passwordExists = false // Treat as missing
-		} else if len(bytes.TrimSpace(data)) == 0 {
-			log.Printf("warning: password file exists but is empty")
-			passwordExists = false // Treat as missing
-		} else {
-			// Validate password by testing it against the repository (if repository is configured)
-			if cfg.Restic.Repository != "" {
-				if err := validatePassword(cfg.Restic.Repository, passwordPath); err != nil {
-					log.Printf("warning: password validation failed (wrong password): %v", err)
-					log.Println("Password file contains incorrect password, attempting to recover from server...")
-					passwordExists = false // Treat as invalid, trigger recovery
-				}
-			}
-		}
-	}
-
-	// If password file is missing or invalid, try to retrieve it from server
-	if !passwordExists {
-		if serverURL == "" || deviceAPIKey == "" {
-			return fmt.Errorf("password file missing and cannot recover (server URL or API key not available)")
-		}
-
-		log.Println("Password file missing or invalid, attempting to recover from server...")
-		password, err := FetchPassword(serverURL, deviceAPIKey)
-		if err != nil {
-			return fmt.Errorf("failed to retrieve password from server: %w", err)
-		}
-
-		// Ensure directory exists
-		dir := filepath.Dir(passwordPath)
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return fmt.Errorf("create password file directory: %w", err)
-		}
-
-		// Write password file with secure permissions (0600)
-		// Trim any existing newlines and add exactly one newline for consistency
-		password = strings.TrimSpace(password) + "\n"
-		if err := os.WriteFile(passwordPath, []byte(password), 0o600); err != nil {
-			return fmt.Errorf("write password file: %w", err)
-		}
-
-		log.Println("✓ Password recovered from server and saved")
-
-		// Validate the recovered password if repository is configured
+	// 1) If secretstore already has the password, we are done.
+	if pw, err := GetResticPassword(cfg); err == nil && strings.TrimSpace(pw) != "" {
 		if cfg.Restic.Repository != "" {
-			if err := validatePassword(cfg.Restic.Repository, passwordPath); err != nil {
-				log.Printf("error: Recovered password from server is also incorrect: %v", err)
-				log.Println("This indicates the repository was initialized with a different password than stored on the server.")
-				log.Println("You may need to:")
-				log.Println("  1. Re-initialize the repository on the server, OR")
-				log.Println("  2. Delete the repository from S3 and re-initialize it")
-				return fmt.Errorf("recovered password is incorrect - repository password mismatch: %w", err)
+			if err := validatePasswordWithSecret(cfg.Restic.Repository, pw); err != nil {
+				log.Printf("warning: stored password validation failed: %v", err)
 			}
-			log.Println("✓ Recovered password validated successfully")
 		}
-
 		return nil
 	}
 
-	// Password file exists and is valid
+	// 2) If a legacy password file is configured, migrate it into secretstore.
+	passwordPath := strings.TrimSpace(cfg.Restic.PasswordFile)
+	if passwordPath != "" {
+		if strings.HasPrefix(passwordPath, "~/") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("get home directory: %w", err)
+			}
+			passwordPath = filepath.Join(home, strings.TrimPrefix(passwordPath, "~/"))
+		}
+
+		if data, err := os.ReadFile(passwordPath); err == nil {
+			pw := strings.TrimSpace(string(data))
+			if pw != "" {
+				if err := StoreResticPassword(pw); err != nil {
+					return fmt.Errorf("store restic password: %w", err)
+				}
+				if cfg.Restic.Repository != "" {
+					if err := validatePasswordWithSecret(cfg.Restic.Repository, pw); err != nil {
+						log.Printf("warning: migrated password validation failed: %v", err)
+					}
+				}
+				return nil
+			}
+		}
+	}
+
+	// 3) Fetch from server if possible
+	if serverURL == "" || deviceAPIKey == "" {
+		return fmt.Errorf("restic password missing and cannot recover (server URL or API key not available)")
+	}
+	log.Println("Restic password missing, attempting to recover from server...")
+	password, err := FetchPassword(serverURL, deviceAPIKey)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve password from server: %w", err)
+	}
+	if err := StoreResticPassword(password); err != nil {
+		return fmt.Errorf("failed to store password: %w", err)
+	}
+	log.Println("✓ Password recovered from server and saved to secretstore")
+
+	if cfg.Restic.Repository != "" {
+		if err := validatePasswordWithSecret(cfg.Restic.Repository, password); err != nil {
+			log.Printf("warning: recovered password validation failed: %v", err)
+		}
+	}
 	return nil
 }
 
@@ -447,6 +420,28 @@ func validatePassword(repository, passwordFile string) error {
 		// We'll let those pass through - they'll be caught during actual backup
 	}
 	
+	return nil
+}
+
+// validatePasswordWithSecret tests if the password is correct by using RESTIC_PASSWORD env.
+func validatePasswordWithSecret(repository, password string) error {
+	cmd := exec.Command("restic", "cat", "config")
+	cmd.Env = append(os.Environ(),
+		"RESTIC_REPOSITORY="+repository,
+		"RESTIC_PASSWORD="+password,
+	)
+
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+
+	if err := cmd.Run(); err != nil {
+		errStr := out.String()
+		if strings.Contains(errStr, "wrong password") || strings.Contains(errStr, "no key found") {
+			return fmt.Errorf("wrong password: %w", err)
+		}
+	}
+
 	return nil
 }
 

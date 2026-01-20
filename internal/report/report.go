@@ -3,9 +3,11 @@ package report
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,37 +16,55 @@ import (
 	"strings"
 	"time"
 
+	"xentz-agent/internal/paths"
+	"xentz-agent/internal/state"
 	"xentz-agent/internal/validation"
 )
 
 const (
 	maxErrorLength    = 4096 // Maximum error message length in bytes
 	maxPendingReports = 20
+	baseBackoff       = 5 * time.Second
+	maxBackoff        = 1 * time.Hour
 )
+
+var ErrRevoked = errors.New("device revoked")
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
 
 // Report represents a backup or retention run report
 type Report struct {
 	DeviceID              string `json:"device_id"`
+	ConfigRevision        int    `json:"config_revision,omitempty"`
 	Job                   string `json:"job"`         // "backup" or "retention"
 	StartedAt             string `json:"started_at"`  // RFC3339 UTC
 	FinishedAt            string `json:"finished_at"` // RFC3339 UTC
-	Status                string `json:"status"`       // "success" or "failure"
+	Status                string `json:"status"`      // "success" or "failure"
 	DurationMS            int64  `json:"duration_ms"`
 	FilesTotal            int64  `json:"files_total,omitempty"`
 	BytesTotal            int64  `json:"bytes_total,omitempty"`
 	DataAddedBytes        int64  `json:"data_added_bytes,omitempty"`
 	SnapshotID            string `json:"snapshot_id,omitempty"`
-	Error                 string `json:"error,omitempty"`                 // Truncated to 4096 bytes
+	Error                 string `json:"error,omitempty"`                   // Truncated to 4096 bytes
 	ConfigValidationError string `json:"config_validation_error,omitempty"` // Config validation error message if any
+}
+
+type spooledReport struct {
+	Report   Report
+	Filename string
+	ModTime  time.Time
+	Attempt  int
 }
 
 // getSpoolDir returns the spool directory path
 func getSpoolDir() (string, error) {
-	home, err := os.UserHomeDir()
+	stateDir, err := paths.StateDir("")
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".xentz-agent", "spool"), nil
+	return filepath.Join(stateDir, "spool"), nil
 }
 
 // truncateError truncates error message to maxErrorLength bytes
@@ -108,6 +128,9 @@ func SendReport(serverURL, deviceAPIKey string, report Report) error {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return ErrRevoked
+	}
 	if resp.StatusCode != http.StatusOK {
 		var errMsg bytes.Buffer
 		// Limit error message to prevent information leakage
@@ -188,9 +211,9 @@ func SpoolReport(report Report) error {
 		return s
 	}
 
-	// Generate filename: {unix_timestamp}-{job}-{status}.json
+	// Generate filename: {unix_timestamp}-{attempt}-{job}-{status}.json
 	timestamp := time.Now().Unix()
-	filename := fmt.Sprintf("%d-%s-%s.json", timestamp, sanitize(report.Job), sanitize(report.Status))
+	filename := fmt.Sprintf("%d-%d-%s-%s.json", timestamp, 0, sanitize(report.Job), sanitize(report.Status))
 	targetPath := filepath.Join(spoolDir, filename)
 
 	jsonData, err := json.MarshalIndent(report, "", "  ")
@@ -212,6 +235,10 @@ func SendReportWithSpool(serverURL, deviceAPIKey string, report Report) error {
 	if err == nil {
 		return nil
 	}
+	if errors.Is(err, ErrRevoked) {
+		_ = markRevoked()
+		return err
+	}
 
 	// Send failed, spool it
 	log.Printf("warning: failed to send report to server: %v", err)
@@ -225,18 +252,18 @@ func SendReportWithSpool(serverURL, deviceAPIKey string, report Report) error {
 }
 
 // LoadPendingReports loads pending reports from spool directory
-func LoadPendingReports(maxCount int) ([]Report, []string, error) {
+func LoadPendingReports(maxCount int) ([]spooledReport, error) {
 	spoolDir, err := getSpoolDir()
 	if err != nil {
-		return nil, nil, fmt.Errorf("get spool dir: %w", err)
+		return nil, fmt.Errorf("get spool dir: %w", err)
 	}
 
 	entries, err := os.ReadDir(spoolDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return []Report{}, []string{}, nil
+			return []spooledReport{}, nil
 		}
-		return nil, nil, fmt.Errorf("read spool dir: %w", err)
+		return nil, fmt.Errorf("read spool dir: %w", err)
 	}
 
 	// Filter JSON files and sort by filename (oldest first)
@@ -256,10 +283,18 @@ func LoadPendingReports(maxCount int) ([]Report, []string, error) {
 	}
 
 	// Load reports
-	var reports []Report
-	var filenames []string
+	var reports []spooledReport
 	for _, filename := range files {
+		_, attempt, ok := parseSpoolFilename(filename)
+		if !ok {
+			continue
+		}
 		targetPath := filepath.Join(spoolDir, filename)
+		info, err := os.Stat(targetPath)
+		if err != nil {
+			log.Printf("warning: failed to stat spooled report %s: %v", filename, err)
+			continue
+		}
 		data, err := os.ReadFile(targetPath)
 		if err != nil {
 			log.Printf("warning: failed to read spooled report %s: %v", filename, err)
@@ -272,11 +307,15 @@ func LoadPendingReports(maxCount int) ([]Report, []string, error) {
 			continue
 		}
 
-		reports = append(reports, report)
-		filenames = append(filenames, filename)
+		reports = append(reports, spooledReport{
+			Report:   report,
+			Filename: filename,
+			ModTime:  info.ModTime(),
+			Attempt:  attempt,
+		})
 	}
 
-	return reports, filenames, nil
+	return reports, nil
 }
 
 // DeleteSpooledReport deletes a spooled report file
@@ -369,6 +408,35 @@ func CleanupOldReports(maxAge time.Duration) error {
 	return nil
 }
 
+// SpoolStats returns count and total size of spooled reports.
+func SpoolStats() (int, int64, error) {
+	spoolDir, err := getSpoolDir()
+	if err != nil {
+		return 0, 0, err
+	}
+	entries, err := os.ReadDir(spoolDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, 0, nil
+		}
+		return 0, 0, err
+	}
+	var count int
+	var size int64
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		count++
+		size += info.Size()
+	}
+	return count, size, nil
+}
+
 // SendPendingReports sends pending reports from spool directory
 func SendPendingReports(serverURL, deviceAPIKey string, maxCount int) error {
 	if serverURL == "" || deviceAPIKey == "" {
@@ -376,7 +444,7 @@ func SendPendingReports(serverURL, deviceAPIKey string, maxCount int) error {
 		return nil
 	}
 
-	reports, filenames, err := LoadPendingReports(maxCount)
+	reports, err := LoadPendingReports(maxCount)
 	if err != nil {
 		return fmt.Errorf("load pending reports: %w", err)
 	}
@@ -388,22 +456,30 @@ func SendPendingReports(serverURL, deviceAPIKey string, maxCount int) error {
 	log.Printf("Sending %d pending report(s)...", len(reports))
 
 	successCount := 0
-	for i, report := range reports {
+	for i, spooled := range reports {
+		if !shouldAttemptSend(spooled.Attempt, spooled.ModTime) {
+			continue
+		}
 		// Rate limit: wait 100ms between reports to avoid flooding server
 		if i > 0 {
 			time.Sleep(100 * time.Millisecond)
 		}
 
-		err := SendReport(serverURL, deviceAPIKey, report)
+		err := SendReport(serverURL, deviceAPIKey, spooled.Report)
 		if err != nil {
-			log.Printf("warning: failed to send pending report %s/%s: %v", report.Job, report.Status, err)
+			if errors.Is(err, ErrRevoked) {
+				_ = markRevoked()
+				return err
+			}
+			log.Printf("warning: failed to send pending report %s/%s: %v", spooled.Report.Job, spooled.Report.Status, err)
+			_ = incrementSpoolAttempt(spooled.Filename)
 			// Continue with next report
 			continue
 		}
 
 		// Successfully sent, delete from spool
-		if err := DeleteSpooledReport(filenames[i]); err != nil {
-			log.Printf("warning: failed to delete spooled report %s: %v", filenames[i], err)
+		if err := DeleteSpooledReport(spooled.Filename); err != nil {
+			log.Printf("warning: failed to delete spooled report %s: %v", spooled.Filename, err)
 		} else {
 			successCount++
 		}
@@ -414,4 +490,79 @@ func SendPendingReports(serverURL, deviceAPIKey string, maxCount int) error {
 	}
 
 	return nil
+}
+
+func parseSpoolFilename(filename string) (int64, int, bool) {
+	if !strings.HasSuffix(filename, ".json") {
+		return 0, 0, false
+	}
+	base := strings.TrimSuffix(filename, ".json")
+	parts := strings.Split(base, "-")
+	if len(parts) < 3 {
+		return 0, 0, false
+	}
+	ts, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+	attempt := 0
+	if len(parts) >= 4 {
+		if a, err := strconv.Atoi(parts[1]); err == nil {
+			attempt = a
+		}
+	}
+	return ts, attempt, true
+}
+
+func shouldAttemptSend(attempt int, lastAttempt time.Time) bool {
+	if attempt < 0 {
+		attempt = 0
+	}
+	backoff := baseBackoff << attempt
+	if backoff > maxBackoff {
+		backoff = maxBackoff
+	}
+	jitter := time.Duration(rand.Int63n(int64(backoff/5) + 1))
+	backoff += jitter
+	return time.Since(lastAttempt) >= backoff
+}
+
+func incrementSpoolAttempt(filename string) error {
+	spoolDir, err := getSpoolDir()
+	if err != nil {
+		return err
+	}
+	if !strings.HasSuffix(filename, ".json") {
+		return nil
+	}
+	base := strings.TrimSuffix(filename, ".json")
+	parts := strings.Split(base, "-")
+	if len(parts) < 3 {
+		return nil
+	}
+	timestamp := parts[0]
+	var newBase string
+	if len(parts) >= 4 {
+		if attempt, err := strconv.Atoi(parts[1]); err == nil {
+			attempt++
+			newBase = strings.Join(append([]string{timestamp, strconv.Itoa(attempt)}, parts[2:]...), "-")
+		}
+	}
+	if newBase == "" {
+		newBase = strings.Join(append([]string{timestamp, "1"}, parts[1:]...), "-")
+	}
+	oldPath := filepath.Join(spoolDir, filename)
+	newPath := filepath.Join(spoolDir, newBase+".json")
+	if err := os.Rename(oldPath, newPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func markRevoked() error {
+	st, err := state.New()
+	if err != nil {
+		return err
+	}
+	return st.SetRevoked(true)
 }

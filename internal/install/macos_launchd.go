@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"xentz-agent/internal/config"
+	"xentz-agent/internal/paths"
 )
 
 const (
@@ -43,7 +44,10 @@ func MacOSLaunchdInstall(configPath string) error {
 		return err
 	}
 
-	logDir := filepath.Join(home, ".xentz-agent", "logs")
+	logDir, err := paths.LogDir("")
+	if err != nil {
+		return fmt.Errorf("resolve log dir: %w", err)
+	}
 	if err := os.MkdirAll(logDir, 0o700); err != nil {
 		return err
 	}
@@ -67,6 +71,74 @@ func MacOSLaunchdInstall(configPath string) error {
 	_ = exec.Command("launchctl", "enable", domain+"/"+label).Run()
 	_ = exec.Command("launchctl", "kickstart", "-k", domain+"/"+label).Run()
 
+	return nil
+}
+
+// MacOSLaunchdInstallSystem installs a LaunchDaemon for system mode
+func MacOSLaunchdInstallSystem(configPath string) error {
+	// Read config to get schedule time (HH:MM)
+	cfg, err := config.Read(configPath)
+	if err != nil {
+		return err
+	}
+	hour, minute, err := parseHHMM(cfg.Schedule.DailyAt)
+	if err != nil {
+		return fmt.Errorf("invalid --daily-at (%q): %w", cfg.Schedule.DailyAt, err)
+	}
+
+	plistDir := "/Library/LaunchDaemons"
+	if err := os.MkdirAll(plistDir, 0o755); err != nil {
+		return err
+	}
+	plistPath := filepath.Join(plistDir, label+".plist")
+
+	exePath, err := os.Executable()
+	if err != nil {
+		return err
+	}
+
+	logDir, err := paths.LogDir("system")
+	if err != nil {
+		return fmt.Errorf("resolve log dir: %w", err)
+	}
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		return err
+	}
+	stdoutPath := filepath.Join(logDir, "agent.out.log")
+	stderrPath := filepath.Join(logDir, "agent.err.log")
+
+	plist := buildPlist(exePath, configPath, hour, minute, stdoutPath, stderrPath)
+	if err := os.WriteFile(plistPath, []byte(plist), 0o644); err != nil {
+		return err
+	}
+
+	_ = exec.Command("launchctl", "bootout", "system", plistPath).Run()
+	if err := exec.Command("launchctl", "bootstrap", "system", plistPath).Run(); err != nil {
+		return fmt.Errorf("launchctl bootstrap: %w", err)
+	}
+	_ = exec.Command("launchctl", "enable", "system/"+label).Run()
+	_ = exec.Command("launchctl", "kickstart", "-k", "system/"+label).Run()
+	return nil
+}
+
+// MacOSLaunchdUninstall removes a LaunchAgent for user mode
+func MacOSLaunchdUninstall(_ string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	plistPath := filepath.Join(home, "Library", "LaunchAgents", label+".plist")
+	domain := fmt.Sprintf("gui/%d", os.Getuid())
+	_ = exec.Command("launchctl", "bootout", domain, plistPath).Run()
+	_ = os.Remove(plistPath)
+	return nil
+}
+
+// MacOSLaunchdUninstallSystem removes a LaunchDaemon for system mode
+func MacOSLaunchdUninstallSystem(_ string) error {
+	plistPath := filepath.Join("/Library/LaunchDaemons", label+".plist")
+	_ = exec.Command("launchctl", "bootout", "system", plistPath).Run()
+	_ = os.Remove(plistPath)
 	return nil
 }
 

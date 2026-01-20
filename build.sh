@@ -62,3 +62,17 @@ echo ""
 echo "Files created:"
 ls -lh "$DIST_DIR" | grep xentz-agent
 
+echo ""
+echo "Generating checksums..."
+CHECKSUM_FILE="$DIST_DIR/checksums.txt"
+> "$CHECKSUM_FILE"
+if command -v sha256sum &> /dev/null; then
+    (cd "$DIST_DIR" && sha256sum xentz-agent-* > "checksums.txt")
+elif command -v shasum &> /dev/null; then
+    (cd "$DIST_DIR" && shasum -a 256 xentz-agent-* > "checksums.txt")
+else
+    echo "Warning: sha256sum/shasum not available; checksums not generated."
+fi
+if [ -f "$CHECKSUM_FILE" ]; then
+    echo "Checksums written to $CHECKSUM_FILE"
+fi

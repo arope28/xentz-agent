@@ -18,7 +18,12 @@ Write-Output "========================"
 Write-Output ""
 
 # Configuration - Update these URLs to point to your release binaries
-$BaseUrl = if ($env:XENTZ_AGENT_BASE_URL) { $env:XENTZ_AGENT_BASE_URL } else { "https://github.com/arope28/xentz-agent/releases/latest/download" }
+$Version = if ($env:XENTZ_AGENT_VERSION) { $env:XENTZ_AGENT_VERSION } else { "latest" }
+if ($Version -eq "latest") {
+    $BaseUrl = if ($env:XENTZ_AGENT_BASE_URL) { $env:XENTZ_AGENT_BASE_URL } else { "https://github.com/arope28/xentz-agent/releases/latest/download" }
+} else {
+    $BaseUrl = if ($env:XENTZ_AGENT_BASE_URL) { $env:XENTZ_AGENT_BASE_URL } else { "https://github.com/arope28/xentz-agent/releases/download/v$Version" }
+}
 $InstallDir = "$env:LOCALAPPDATA\xentz-agent"
 $BinaryName = "xentz-agent.exe"
 
@@ -31,6 +36,7 @@ if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64" -or $env:PROCESSOR_ARCHITEW6432 -eq 
 }
 
 Write-Output "Detected: Windows ($Arch)"
+Write-Output "Version: $Version"
 Write-Output ""
 
 # Check for restic
@@ -136,6 +142,28 @@ try {
 } catch {
     Write-ColorOutput Red "Error: Failed to download binary"
     Write-Output "Please check that the release exists at: $DownloadUrl"
+    exit 1
+}
+
+# Verify checksum
+$ChecksumsUrl = "$BaseUrl/checksums.txt"
+$ChecksumsPath = Join-Path $env:TEMP "xentz-agent-checksums.txt"
+try {
+    Invoke-WebRequest -Uri $ChecksumsUrl -OutFile $ChecksumsPath -UseBasicParsing
+} catch {
+    Write-ColorOutput Red "Error: Failed to download checksums"
+    exit 1
+}
+
+$Expected = (Select-String -Path $ChecksumsPath -Pattern " $BinaryFile$").Line.Split()[0]
+if (-not $Expected) {
+    Write-ColorOutput Red "Error: Checksum not found for $BinaryFile"
+    exit 1
+}
+
+$Actual = (Get-FileHash -Algorithm SHA256 $BinaryPath).Hash.ToLower()
+if ($Expected.ToLower() -ne $Actual) {
+    Write-ColorOutput Red "Error: Checksum verification failed"
     exit 1
 }
 
