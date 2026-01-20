@@ -8,7 +8,7 @@ A lightweight backup agent that uses restic to perform scheduled backups on macO
 - **macOS** (Intel and Apple Silicon)
   - Uses launchd for scheduling
 - **Windows** (amd64 and arm64)
-  - Uses Task Scheduler for scheduling
+  - Uses Task Scheduler for user mode, Windows Service for system mode
 - **Linux** (amd64, arm64, and armv7)
   - Uses systemd (preferred) or cron (fallback) for scheduling
 
@@ -82,6 +82,18 @@ xentz-agent retention
 
 # Check the status of the last backup
 xentz-agent status
+
+# Update backup paths
+xentz-agent config --add-include "/path/to/dir" --add-exclude "*.tmp"
+
+# Uninstall and optionally purge state/logs
+xentz-agent uninstall --mode user --purge-state
+
+# Create diagnostics bundle
+xentz-agent diagnostics --out /tmp/xentz-agent-diag.zip
+
+# Localhost-only status UI
+xentz-agent local-ui --addr 127.0.0.1:9800
 ```
 
 ## Features
@@ -106,7 +118,7 @@ xentz-agent status
 - **Log compression**: Old rotated logs are automatically compressed
 - **Centralized shipping**: Logs are automatically shipped to the control plane for centralized analysis
 - **Tagged logs**: All logs include `tenant_id` and `device_id` for correlation
-- **Log location**: `~/.xentz-agent/logs/agent.log`
+- **Log location**: `<LOG_DIR>/agent.log` (see file structure below)
 
 ## Building from Source
 
@@ -123,7 +135,8 @@ chmod +x build.sh
 build.bat
 ```
 
-This creates executables in the `dist/` directory for all supported platforms and architectures.
+This creates executables in the `dist/` directory for all supported platforms and architectures,
+plus a `checksums.txt` file with SHA-256 hashes.
 
 ### Build for Specific Platform
 
@@ -170,17 +183,40 @@ GOOS=linux GOARCH=amd64 go build -o xentz-agent ./cmd/xentz-agent
 
 ## File Structure
 
+Paths are OS- and mode-specific (user vs system). The agent uses:
+
+- **CONFIG_DIR** for config and enrollment metadata
+- **STATE_DIR** for spool and run state
+- **LOG_DIR** for logs (or journald/event viewer if configured)
+
+Example (user mode on Linux):
 ```
-~/.xentz-agent/
-├── config.json          # Device configuration (tenant_id, device_id, API key)
-├── config-cached.json   # Cached server configuration (fallback)
-├── restic.pw           # Restic repository password
-├── last_run.json        # Last backup run status
-├── last_retention_run.json  # Last retention run status
-└── logs/
-    ├── agent.log        # Current log file
-    ├── agent.log.2024-01-15T12-00-00.json  # Rotated logs
-    └── agent.log.2024-01-15T12-00-00.json.gz  # Compressed logs
+~/.config/xentz-agent/
+├── config.json
+└── config-cached.json
+
+~/.local/share/xentz-agent/
+├── last_run.json
+├── last_retention.json
+└── spool/
+
+~/.local/state/xentz-agent/logs/
+└── agent.log
+```
+
+Example (system mode on Linux):
+```
+/etc/xentz-agent/
+├── config.json
+└── config-cached.json
+
+/var/lib/xentz-agent/
+├── last_run.json
+├── last_retention.json
+└── spool/
+
+/var/log/xentz-agent/
+└── agent.log
 ```
 
 ## Notes
@@ -193,6 +229,11 @@ GOOS=linux GOARCH=amd64 go build -o xentz-agent ./cmd/xentz-agent
   - macOS: `/usr/local/bin` (requires sudo during installation)
   - Linux: `~/.local/bin` (user-specific)
   - Windows: `%LOCALAPPDATA%\xentz-agent\` (user-specific)
+
+## Secrets
+
+- Device API key and restic password are stored in OS-native secret stores when available.
+- Linux falls back to a file-based secret store under `<CONFIG_DIR>/secrets` with `0600` permissions.
 
 ## API Integration
 

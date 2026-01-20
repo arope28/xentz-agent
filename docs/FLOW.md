@@ -266,7 +266,7 @@ The xentz-agent is a backup agent that:
        │
        │ 2b. Failure (network error, 401, 500, etc.)
        │     └─► Write report to spool directory
-       │     └─► ~/.xentz-agent/spool/<timestamp>-<job>-<status>.json
+       │     └─► <STATE_DIR>/spool/<timestamp>-<job>-<status>.json
        ▼
 ┌─────────────────────────────────────┐
 │  Local Spool Directory              │
@@ -303,8 +303,8 @@ The xentz-agent is a backup agent that:
 └──────┬──────────────────────────────┘
        │
        │ 2. Read state files
-       │    ~/.xentz-agent/state/backup.json
-       │    ~/.xentz-agent/state/retention.json
+       │    <STATE_DIR>/last_run.json
+       │    <STATE_DIR>/last_retention.json
        ▼
 ┌─────────────────────────────────────┐
 │  xentz-agent                        │
@@ -367,9 +367,9 @@ The agent uses restic with REST API backend:
 
 ## State Persistence
 
-- **Config:** `~/.xentz-agent/config.json`
-- **Cached Config:** `~/.xentz-agent/config.cached.json`
-- **Backup State:** `~/.xentz-agent/state/backup.json`
-- **Retention State:** `~/.xentz-agent/state/retention.json`
-- **Spooled Reports:** `~/.xentz-agent/spool/*.json`
+- **Config:** `<CONFIG_DIR>/config.json`
+- **Cached Config:** `<CONFIG_DIR>/config-cached.json`
+- **Backup State:** `<STATE_DIR>/last_run.json`
+- **Retention State:** `<STATE_DIR>/last_retention.json`
+- **Spooled Reports:** `<STATE_DIR>/spool/*.json`
 

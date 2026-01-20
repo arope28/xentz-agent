@@ -97,7 +97,7 @@ xentz-agent/
 - Manages enrollment data (tenant_id, device_id, device_api_key)
 - Handles config file reading and writing
 - Manages cached config for fallback scenarios
-- Resolves config file paths (default: `~/.xentz-agent/config.json`)
+- Resolves config file paths (default: `<CONFIG_DIR>/config.json`)
 
 **Key Types:**
 - `Config` - Main configuration structure
@@ -274,6 +274,7 @@ xentz-agent/
 **Responsibilities:**
 - Similar to `build.sh` but for Windows environment
 - Uses Go cross-compilation
+- Emits `dist/checksums.txt` with SHA-256 hashes
 
 ## Data Flow
 
@@ -284,11 +285,31 @@ xentz-agent/
 
 ## Configuration Storage
 
-- **Config file:** `~/.xentz-agent/config.json`
-- **Cached config:** `~/.xentz-agent/config.cached.json`
-- **State files:** `~/.xentz-agent/state/backup.json`, `~/.xentz-agent/state/retention.json`
-- **Spool directory:** `~/.xentz-agent/spool/`
-- **Password file:** `~/.xentz-agent/restic.pw` (default)
+The agent uses OS- and mode-specific directories resolved by `internal/paths`:
+
+- **CONFIG_DIR**: config and enrollment metadata
+- **STATE_DIR**: spool queue and run state
+- **LOG_DIR**: logs (or journald/event viewer if configured)
+
+Example (user mode on Linux):
+```
+~/.config/xentz-agent/config.json
+~/.config/xentz-agent/config-cached.json
+~/.local/share/xentz-agent/last_run.json
+~/.local/share/xentz-agent/last_retention.json
+~/.local/share/xentz-agent/spool/
+~/.local/state/xentz-agent/logs/agent.log
+```
+
+Example (system mode on Linux):
+```
+/etc/xentz-agent/config.json
+/etc/xentz-agent/config-cached.json
+/var/lib/xentz-agent/last_run.json
+/var/lib/xentz-agent/last_retention.json
+/var/lib/xentz-agent/spool/
+/var/log/xentz-agent/agent.log
+```
 
 ## Security Considerations
 

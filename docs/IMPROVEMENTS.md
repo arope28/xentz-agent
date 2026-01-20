@@ -110,45 +110,17 @@ err := validation.ValidateServerURLStrict("https://control.example.com") // ✅ 
 ### 4. Secret Storage Improvements 🔐
 
 **Current Behavior:**
-- Password file: `~/.xentz-agent/restic.pw` with `0600` permissions ✅
-- Device API key: Stored in `config.json` with `0600` permissions ✅
-- Config file: `~/.xentz-agent/config.json` with `0600` permissions ✅
+- Device API key and restic password are stored in OS-native secret stores when available ✅
+- Linux uses libsecret if present, otherwise falls back to an on-disk secret store under `<CONFIG_DIR>/secrets` with `0600` perms ✅
+- Config file stores non-sensitive settings only ✅
 
 **Security Assessment:**
-- **MVP:** Current approach is acceptable
-- **Long-term:** Consider OS-native credential storage
-
-**Recommendations:**
-
-1. **Password File (restic.pw):**
-   - ✅ Current: File with 0600 permissions (good for MVP)
-   - Future: Consider OS keychain integration:
-     - macOS: Keychain Services
-     - Linux: libsecret / Secret Service API
-     - Windows: Credential Manager / DPAPI
-
-2. **Device API Key:**
-   - ✅ Current: In config.json with 0600 (acceptable for MVP)
-   - Future: Move to OS credential store
-   - Consider: Separate credential storage from config
-
-3. **Config File:**
-   - ✅ Current: Contains non-sensitive config + API key
-   - Future: Split into:
-     - `config.json`: Non-sensitive settings (0600 OK)
-     - Credential store: API keys, passwords
+- **Day 1:** OS-native stores are used where available
+- **Fallback:** File-based secrets are protected with strict permissions
 
 **Implementation Notes:**
-- Consider creating: `internal/credentials/` package
-- Use libraries:
-  - macOS: `github.com/keybase/go-keychain`
-  - Linux: `github.com/godbus/dbus/v5` (Secret Service)
-  - Windows: `golang.org/x/sys/windows` (Credential Manager)
-
-**Migration Path:**
-- Keep file-based storage as fallback
-- Add OS credential storage as opt-in feature
-- Migrate existing credentials on first run
+- Implemented in `internal/secretstore/*` with per-OS backends
+- Legacy password files are migrated into secretstore on first use
 
 ---
 

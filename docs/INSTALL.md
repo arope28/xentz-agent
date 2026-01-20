@@ -186,7 +186,7 @@ xentz-agent install --token <install-token> \
 The agent will:
 1. Enroll with the control plane using the install token
 2. Receive server-assigned identifiers (tenant_id, device_id, device_api_key)
-3. Store the device_api_key for future authentication
+3. Store the device_api_key for future authentication (secret store when available)
 4. Set up scheduled backups
 
 ### Server-Driven Configuration
@@ -211,3 +211,26 @@ xentz-agent install --repo rest:https://your-repo.com/backup \
 
 In legacy mode, configuration is stored locally and not fetched from a server.
 
+
+
+## User vs System Mode
+
+By default, `install` uses user mode. To install in system mode:
+
+```bash
+xentz-agent install --mode system --token <install-token> --server <control-plane-url> --include "/path/to/backup"
+```
+
+- **Windows**: system mode installs a Windows Service.
+- **macOS**: system mode installs a LaunchDaemon.
+- **Linux**: system mode installs a systemd service + timer.
+
+## Localhost Status UI (Optional)
+
+Run a localhost-only status UI (read-only by default):
+
+```bash
+xentz-agent local-ui --addr 127.0.0.1:9800
+```
+
+Requests must include `X-Local-Token` from `<CONFIG_DIR>/local-ui.token`.
