@@ -14,6 +14,7 @@ NC='\033[0m' # No Color
 BINARY_NAME="xentz-agent"
 VERSION="${XENTZ_AGENT_VERSION:-latest}"
 MODE="${XENTZ_AGENT_MODE:-user}"
+SKIP_CHECKSUMS="${XENTZ_AGENT_SKIP_CHECKSUMS:-0}"
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -244,28 +245,41 @@ fi
 echo "Downloading checksums..."
 CHECKSUM_URL="${BASE_URL}/checksums.txt"
 if ! curl -fsSL -o "$TEMP_CHECKSUMS" "$CHECKSUM_URL"; then
-    echo -e "${RED}Error: Failed to download checksums${NC}"
-    exit 1
+    if [ "$SKIP_CHECKSUMS" = "1" ]; then
+        echo -e "${YELLOW}Warning: checksums not found; skipping verification (XENTZ_AGENT_SKIP_CHECKSUMS=1)${NC}"
+        EXPECTED_SUM=""
+    else
+        echo -e "${RED}Error: Failed to download checksums${NC}"
+        echo "The release is missing checksums.txt. Upload it or rerun with:"
+        echo "  XENTZ_AGENT_SKIP_CHECKSUMS=1 ./install.sh"
+        exit 1
+    fi
 fi
 
-EXPECTED_SUM=$(grep " $BINARY_FILE\$" "$TEMP_CHECKSUMS" | awk '{print $1}')
-if [ -z "$EXPECTED_SUM" ]; then
-    echo -e "${RED}Error: Checksum not found for ${BINARY_FILE}${NC}"
-    exit 1
+if [ -z "$EXPECTED_SUM" ] && [ "$SKIP_CHECKSUMS" != "1" ]; then
+    EXPECTED_SUM=$(grep " $BINARY_FILE\$" "$TEMP_CHECKSUMS" | awk '{print $1}')
+    if [ -z "$EXPECTED_SUM" ]; then
+        echo -e "${RED}Error: Checksum not found for ${BINARY_FILE}${NC}"
+        exit 1
+    fi
 fi
 
-if command -v sha256sum &> /dev/null; then
-    ACTUAL_SUM=$(sha256sum "$TEMP_BINARY" | awk '{print $1}')
-elif command -v shasum &> /dev/null; then
-    ACTUAL_SUM=$(shasum -a 256 "$TEMP_BINARY" | awk '{print $1}')
+if [ -n "$EXPECTED_SUM" ]; then
+    if command -v sha256sum &> /dev/null; then
+        ACTUAL_SUM=$(sha256sum "$TEMP_BINARY" | awk '{print $1}')
+    elif command -v shasum &> /dev/null; then
+        ACTUAL_SUM=$(shasum -a 256 "$TEMP_BINARY" | awk '{print $1}')
+    else
+        echo -e "${YELLOW}Warning: sha256sum not available, skipping checksum verification${NC}"
+        ACTUAL_SUM="$EXPECTED_SUM"
+    fi
+
+    if [ "$EXPECTED_SUM" != "$ACTUAL_SUM" ]; then
+        echo -e "${RED}Error: Checksum verification failed${NC}"
+        exit 1
+    fi
 else
-    echo -e "${YELLOW}Warning: sha256sum not available, skipping checksum verification${NC}"
-    ACTUAL_SUM="$EXPECTED_SUM"
-fi
-
-if [ "$EXPECTED_SUM" != "$ACTUAL_SUM" ]; then
-    echo -e "${RED}Error: Checksum verification failed${NC}"
-    exit 1
+    echo -e "${YELLOW}Warning: checksum verification skipped${NC}"
 fi
 
 # Make executable

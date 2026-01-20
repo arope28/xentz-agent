@@ -92,6 +92,7 @@ ls -lh dist/
 # Create release with tag and upload all binaries + installers
 gh release create v1.0.0 \
   dist/xentz-agent-* \
+  dist/checksums.txt \
   install.sh \
   install.ps1 \
   --title "v1.0.0" \
@@ -105,8 +106,8 @@ gh release create v1.0.0 \
   --title "v1.0.0" \
   --notes "Release notes here"
 
-# Upload all binaries
-gh release upload v1.0.0 dist/xentz-agent-*
+# Upload all binaries + checksums
+gh release upload v1.0.0 dist/xentz-agent-* dist/checksums.txt
 
 # Upload installers
 gh release upload v1.0.0 install.sh install.ps1
