@@ -9,6 +9,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"xentz-agent/internal/validation"
@@ -24,15 +25,18 @@ type DeviceMetadata struct {
 // EnrollmentRequest is sent to the server during enrollment
 // Note: Token is sent in Authorization header, not in body
 type EnrollmentRequest struct {
-	UserID   string         `json:"user_id,omitempty"`   // User identifier for repository path construction
-	Metadata DeviceMetadata `json:"metadata"`            // Device metadata (hostname, os, arch)
-	Include  []string      `json:"include,omitempty"`   // Include paths for backup (sent to control plane for storage)
+	PrincipalID string         `json:"principal_id,omitempty"` // Stable per-user backup principal identifier
+	DisplayName string         `json:"display_name,omitempty"` // Human-friendly name (usually OS username)
+	UserID      string         `json:"user_id,omitempty"`      // Legacy: user identifier for repo path construction (server may ignore when principal_id provided)
+	Metadata    DeviceMetadata `json:"metadata"`               // Device metadata (hostname, os, arch)
+	Include     []string       `json:"include,omitempty"`      // Include paths for backup (sent to control plane for storage)
 }
 
 // EnrollmentResponse is received from the server
 type EnrollmentResponse struct {
 	TenantID     string `json:"tenant_id"`
 	DeviceID     string `json:"device_id"`
+	PrincipalID  string `json:"principal_id,omitempty"`
 	DeviceAPIKey string `json:"device_api_key"`     // Long-lived, revocable API key for future requests
 	RepoPath     string `json:"repo_path"`          // Full repository URL or path
 	Password     string `json:"password,omitempty"` // Optional: server-generated password
@@ -42,6 +46,7 @@ type EnrollmentResponse struct {
 type EnrollmentResult struct {
 	TenantID     string
 	DeviceID     string
+	PrincipalID  string
 	DeviceAPIKey string // Long-lived API key for fetching config
 	RepoPath     string
 	Password     string
@@ -72,7 +77,7 @@ func GetUserID() (string, error) {
 
 // Enroll calls the control plane API to enroll the device and get server-issued identifiers
 // includePaths are sent to the control plane so it can store and return them in config
-func Enroll(token, serverURL string, includePaths []string) (*EnrollmentResult, error) {
+func Enroll(token, serverURL string, includePaths []string, principalID, displayName string) (*EnrollmentResult, error) {
 	if token == "" {
 		return nil, fmt.Errorf("install token is required")
 	}
@@ -100,9 +105,11 @@ func Enroll(token, serverURL string, includePaths []string) (*EnrollmentResult, 
 	// Prepare enrollment request (token goes in Authorization header, not body)
 	// Include paths are sent in the request body so the control plane can store them
 	reqBody := EnrollmentRequest{
-		UserID:   userID,
-		Metadata: metadata,
-		Include:  includePaths,
+		PrincipalID: strings.TrimSpace(principalID),
+		DisplayName: strings.TrimSpace(displayName),
+		UserID:      userID,
+		Metadata:    metadata,
+		Include:     includePaths,
 	}
 
 	jsonData, err := json.Marshal(reqBody)
@@ -167,6 +174,7 @@ func Enroll(token, serverURL string, includePaths []string) (*EnrollmentResult, 
 	return &EnrollmentResult{
 		TenantID:     enrollmentResp.TenantID,
 		DeviceID:     enrollmentResp.DeviceID,
+		PrincipalID:  enrollmentResp.PrincipalID,
 		DeviceAPIKey: enrollmentResp.DeviceAPIKey,
 		RepoPath:     repoPath,
 		Password:     enrollmentResp.Password,

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -17,11 +18,13 @@ import (
 	"xentz-agent/internal/config"
 	"xentz-agent/internal/diagnostics"
 	"xentz-agent/internal/enroll"
+	"xentz-agent/internal/identity"
 	"xentz-agent/internal/install"
 	"xentz-agent/internal/localui"
 	"xentz-agent/internal/logging"
 	"xentz-agent/internal/paths"
 	"xentz-agent/internal/report"
+	"xentz-agent/internal/secretstore"
 	windowsservice "xentz-agent/internal/service/windows"
 	"xentz-agent/internal/state"
 )
@@ -31,6 +34,7 @@ func usage() {
 
 Commands:
   install     Install config + scheduled task (macOS: launchd, Windows: Task Scheduler/Service, Linux: systemd/cron)
+  recover     Recover enrollment after config loss (portal recovery token)
   uninstall   Remove service/scheduler and optionally purge config/state
   upgrade     Replace binary and restart service/scheduler
   diagnostics Create a support bundle (logs + config checksum + state)
@@ -43,6 +47,9 @@ Commands:
 Examples:
   # Token-based enrollment (recommended):
   xentz-agent install --token <install-token> --server https://control-plane.example.com --daily-at 02:00 --include "/Users/me/Documents"
+  
+  # Recover after a reinstall/restore (requires portal-minted token):
+  xentz-agent recover --server https://control-plane.example.com --recovery-token <token>
   
   # Legacy mode (direct repository):
   xentz-agent install --repo rest:https://... --password "..." --daily-at 02:00 --include "/Users/me/Documents"
@@ -149,6 +156,60 @@ func resolveConfigPathWithMode(override, mode string) (string, error) {
 	default:
 		return config.ResolvePath("")
 	}
+}
+
+// loadEnrollment loads local config if present, otherwise falls back to durable identity,
+// and always prefers the API key stored in secretstore.
+func loadEnrollment(cfgFile, mode string) (config.Config, string, error) {
+	var cfg config.Config
+	if c, err := config.Read(cfgFile); err == nil {
+		cfg = c
+	}
+
+	// Backward-compat: if we have an enrolled config but no durable identity yet,
+	// write identity.json using principal_id=device_id (matches server backfill).
+	if strings.TrimSpace(cfg.DeviceID) != "" && strings.TrimSpace(cfg.ServerURL) != "" {
+		effectiveMode := mode
+		if strings.TrimSpace(effectiveMode) == "" {
+			effectiveMode = cfg.Mode
+		}
+		if _, err := identity.Load(effectiveMode); err != nil {
+			_ = identity.Save(effectiveMode, identity.Identity{
+				ServerURL:   strings.TrimSpace(cfg.ServerURL),
+				TenantID:    strings.TrimSpace(cfg.TenantID),
+				DeviceID:    strings.TrimSpace(cfg.DeviceID),
+				PrincipalID: strings.TrimSpace(cfg.DeviceID),
+				Mode:        strings.TrimSpace(cfg.Mode),
+			})
+		}
+	}
+
+	// If server_url is missing (config deleted or incomplete), try identity.json
+	if strings.TrimSpace(cfg.ServerURL) == "" || strings.TrimSpace(cfg.DeviceID) == "" || strings.TrimSpace(cfg.TenantID) == "" {
+		if id, err := identity.Load(mode); err == nil {
+			if strings.TrimSpace(cfg.ServerURL) == "" {
+				cfg.ServerURL = strings.TrimSpace(id.ServerURL)
+			}
+			if strings.TrimSpace(cfg.TenantID) == "" {
+				cfg.TenantID = strings.TrimSpace(id.TenantID)
+			}
+			if strings.TrimSpace(cfg.DeviceID) == "" {
+				cfg.DeviceID = strings.TrimSpace(id.DeviceID)
+			}
+			if strings.TrimSpace(cfg.Mode) == "" && strings.TrimSpace(id.Mode) != "" {
+				cfg.Mode = strings.TrimSpace(id.Mode)
+			}
+		}
+	}
+
+	apiKey, err := config.GetDeviceAPIKey(cfg)
+	if err != nil {
+		if errors.Is(err, secretstore.ErrNotFound) {
+			return cfg, "", nil
+		}
+		return cfg, "", err
+	}
+	return cfg, strings.TrimSpace(apiKey), nil
 }
 
 func replaceBinary(newPath string) error {
@@ -263,6 +324,11 @@ func main() {
 		}
 		cfg.UserID = userID
 
+		principalID, err := identity.GetOrCreatePrincipalID(*mode)
+		if err != nil {
+			log.Fatalf("get principal ID: %v", err)
+		}
+
 		// Handle enrollment flow (token-based) or legacy flow (direct repo)
 		if *token != "" {
 			// Token-based enrollment
@@ -281,11 +347,20 @@ func main() {
 					log.Printf("  Updating server URL: %s -> %s", cfg.ServerURL, *server)
 					cfg.ServerURL = *server
 				}
+
+				// Ensure durable identity exists (for recovery after config loss).
+				_ = identity.Save(*mode, identity.Identity{
+					ServerURL:   cfg.ServerURL,
+					TenantID:    cfg.TenantID,
+					DeviceID:    cfg.DeviceID,
+					PrincipalID: principalID,
+					Mode:        *mode,
+				})
 			} else {
 				// Perform enrollment
 				log.Println("Enrolling device with control plane...")
 				// Pass include paths to enrollment so control plane can store them
-				enrollmentResult, err := enroll.Enroll(*token, *server, includes)
+				enrollmentResult, err := enroll.Enroll(*token, *server, includes, principalID, userID)
 				if err != nil {
 					log.Fatalf("enrollment failed: %v", err)
 				}
@@ -299,6 +374,15 @@ func main() {
 				cfg.DeviceAPIKey = ""
 				cfg.ServerURL = *server
 				cfg.Restic.Repository = enrollmentResult.RepoPath
+
+				// Persist durable identity separately from config (for recovery after config loss).
+				_ = identity.Save(*mode, identity.Identity{
+					ServerURL:   cfg.ServerURL,
+					TenantID:    cfg.TenantID,
+					DeviceID:    cfg.DeviceID,
+					PrincipalID: principalID,
+					Mode:        *mode,
+				})
 
 				log.Printf("Enrollment successful:")
 				log.Printf("  Tenant ID: %s", cfg.TenantID)
@@ -402,6 +486,98 @@ func main() {
 		log.Println("install complete ✅")
 		return
 
+	case "recover":
+		fs := flag.NewFlagSet(cmd, flag.ExitOnError)
+		server := fs.String("server", "", "Control plane base URL (required)")
+		mode := fs.String("mode", "user", "Mode: user or system (controls where identity is stored)")
+		configPath := fs.String("config", "", "Config path override")
+		recoveryToken := fs.String("recovery-token", "", "Portal-minted recovery token (one-time, short-lived)")
+		principalIDFlag := fs.String("principal-id", "", "Stable principal ID (optional if identity.json exists)")
+		displayName := fs.String("display-name", "", "Human-friendly name (optional, defaults to current username)")
+
+		if err := fs.Parse(os.Args[2:]); err != nil {
+			log.Fatalf("parse flags: %v", err)
+		}
+		if *server == "" {
+			log.Fatal("--server is required")
+		}
+
+		cfgFile, err = resolveConfigPathWithMode(*configPath, *mode)
+		if err != nil {
+			log.Fatalf("resolve config path: %v", err)
+		}
+
+		// Resolve principal ID from flag or durable identity.
+		principalID := strings.TrimSpace(*principalIDFlag)
+		if principalID == "" {
+			if id, err := identity.Load(*mode); err == nil {
+				principalID = strings.TrimSpace(id.PrincipalID)
+			}
+		}
+		if principalID == "" {
+			log.Fatal("principal id not found; provide --principal-id or restore identity.json")
+		}
+
+		// Default display name to current user ID
+		if strings.TrimSpace(*displayName) == "" {
+			if u, err := enroll.GetUserID(); err == nil {
+				*displayName = u
+			}
+		}
+
+		log.Println("Recovering enrollment with control plane...")
+		res, err := enroll.Recover(*server, *recoveryToken, principalID, *displayName)
+		if err != nil {
+			log.Fatalf("recover failed: %v", err)
+		}
+
+		if err := config.StoreDeviceAPIKey(res.DeviceAPIKey); err != nil {
+			log.Fatalf("store device api key: %v", err)
+		}
+		if err := config.StoreResticPassword(res.Password); err != nil {
+			log.Fatalf("store restic password: %v", err)
+		}
+
+		// Fetch fresh policy config and cache it.
+		fetchedCfg, err := config.FetchAndCache(*server, res.DeviceAPIKey)
+		if err != nil {
+			log.Printf("warning: failed to fetch config after recovery: %v", err)
+		}
+
+		// Write minimal local config (no secrets).
+		cfg := fetchedCfg
+		cfg.ServerURL = *server
+		cfg.TenantID = res.TenantID
+		cfg.DeviceID = res.DeviceID
+		cfg.DeviceAPIKey = ""
+		cfg.Mode = *mode
+		if cfg.UserID == "" {
+			if u, err := enroll.GetUserID(); err == nil {
+				cfg.UserID = u
+			}
+		}
+		// Ensure password file is handled (secretstore-first, fallback to password file if configured).
+		_ = config.EnsurePasswordFile(cfg, *server, res.DeviceAPIKey)
+
+		if err := config.Write(cfgFile, cfg); err != nil {
+			log.Fatalf("write config: %v", err)
+		}
+
+		// Persist durable identity separately from config.
+		_ = identity.Save(*mode, identity.Identity{
+			ServerURL:   *server,
+			TenantID:    res.TenantID,
+			DeviceID:    res.DeviceID,
+			PrincipalID: principalID,
+			Mode:        *mode,
+		})
+
+		log.Println("Recovery successful:")
+		log.Printf("  Tenant ID: %s", res.TenantID)
+		log.Printf("  Device ID: %s", res.DeviceID)
+		log.Printf("  Repo:      %s", res.RepoPath)
+		return
+
 	case "uninstall":
 		fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 		mode := fs.String("mode", "user", "Uninstall mode: user or system")
@@ -437,6 +613,10 @@ func main() {
 			if err == nil {
 				_ = os.RemoveAll(logDir)
 			}
+			// Also purge durable identity + secrets (factory reset).
+			_ = identity.Delete(*mode)
+			_ = secretstore.Delete(secretstore.KeyDeviceAPIKey)
+			_ = secretstore.Delete(secretstore.KeyResticPassword)
 		}
 
 		log.Println("uninstall complete ✅")
@@ -573,14 +753,13 @@ func main() {
 			log.Fatalf("resolve config path: %v", err)
 		}
 
-		// Read local config to get enrollment data (device_id, device_api_key, server_url)
-		localCfg, err := config.Read(cfgFile)
+		// Load local config (if present) and fall back to durable identity (identity.json).
+		// API key is loaded from secretstore when available.
+		localCfg, apiKey, err := loadEnrollment(cfgFile, "")
 		if err != nil {
-			log.Fatalf("read config: %v", err)
+			log.Fatalf("load enrollment: %v", err)
 		}
-		if apiKey, err := config.GetDeviceAPIKey(localCfg); err == nil {
-			localCfg.DeviceAPIKey = apiKey
-		}
+		localCfg.DeviceAPIKey = apiKey
 
 		// Fetch config from server (with fallback to cached config)
 		var cfg config.Config
@@ -611,6 +790,9 @@ func main() {
 			}
 		} else {
 			// Legacy mode: use local config directly
+			if localCfg.Restic.Repository == "" {
+				log.Fatalf("missing config and no enrollment identity available (run `xentz-agent install` or `xentz-agent recover`)")
+			}
 			log.Println("Using local config (device not enrolled or legacy mode)")
 			cfg = localCfg
 		}
@@ -739,14 +921,11 @@ func main() {
 			log.Fatalf("resolve config path: %v", err)
 		}
 
-		// Read local config to get enrollment data (device_id, device_api_key, server_url)
-		localCfg, err := config.Read(cfgFile)
+		localCfg, apiKey, err := loadEnrollment(cfgFile, "")
 		if err != nil {
-			log.Fatalf("read config: %v", err)
+			log.Fatalf("load enrollment: %v", err)
 		}
-		if apiKey, err := config.GetDeviceAPIKey(localCfg); err == nil {
-			localCfg.DeviceAPIKey = apiKey
-		}
+		localCfg.DeviceAPIKey = apiKey
 
 		// Fetch config from server (with fallback to cached config)
 		var cfg config.Config
@@ -777,6 +956,9 @@ func main() {
 			}
 		} else {
 			// Legacy mode: use local config directly
+			if localCfg.Restic.Repository == "" {
+				log.Fatalf("missing config and no enrollment identity available (run `xentz-agent install` or `xentz-agent recover`)")
+			}
 			log.Println("Using local config (device not enrolled or legacy mode)")
 			cfg = localCfg
 		}
@@ -984,10 +1166,14 @@ func main() {
 			log.Fatalf("resolve config path: %v", err)
 		}
 
-		// Load local config
-		localCfg, err := config.Read(cfgFile)
+		// Load local config (if present) and fall back to durable identity (identity.json).
+		localCfg, apiKey, err := loadEnrollment(cfgFile, "")
 		if err != nil {
-			log.Fatalf("read config: %v", err)
+			log.Fatalf("load enrollment: %v", err)
+		}
+		localCfg.DeviceAPIKey = apiKey
+		if localCfg.ServerURL == "" && localCfg.Restic.Repository == "" {
+			log.Fatalf("missing config and no enrollment identity available (run `xentz-agent install` or `xentz-agent recover`)")
 		}
 
 		// Helper function to normalize path (expand ~, make absolute)
