@@ -219,6 +219,7 @@ func buildPlist(exePath, configPath string, hour, minute int, stdoutPath, stderr
     <array>
       <string>%s</string>
       <string>backup</string>
+      <string>--auto-init</string>
       <string>--config</string>
       <string>%s</string>
     </array>

@@ -282,7 +282,7 @@ After=network.target
 [Service]
 Type=oneshot
 Environment="PATH=%s"
-ExecStart=%s backup --config %s
+ExecStart=%s backup --auto-init --config %s
 StandardOutput=append:%s
 StandardError=append:%s
 
@@ -306,7 +306,7 @@ After=network.target
 [Service]
 Type=oneshot
 Environment="PATH=%s"
-ExecStart=%s backup --config %s
+ExecStart=%s backup --auto-init --config %s
 StandardOutput=journal
 StandardError=journal
 
@@ -372,7 +372,7 @@ func installCron(exePath, configPath string, hour, minute int, home string) erro
 	// Set PATH at the start of the command to ensure restic can be found
 	// Use single quotes to prevent shell interpretation of paths
 	// PATH is set inline with the command using shell syntax
-	cronEntry := fmt.Sprintf("%d %d * * * PATH=%s %s backup --config %s >> %s/agent.out.log 2>> %s/agent.err.log\n",
+	cronEntry := fmt.Sprintf("%d %d * * * PATH=%s %s backup --auto-init --config %s >> %s/agent.out.log 2>> %s/agent.err.log\n",
 		minute, hour, pathEnvEscaped, exePathEscaped, configPathEscaped, logDirEscaped, logDirEscaped)
 
 	// Check if entry already exists

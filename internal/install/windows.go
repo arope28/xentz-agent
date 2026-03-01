@@ -73,7 +73,7 @@ func WindowsTaskSchedulerInstall(configPath string) error {
 	batchFile := filepath.Join(stateDir, "run-backup.bat")
 	batchContent := fmt.Sprintf(`@echo off
 set PATH=%s
-"%s" backup --config "%s" >> "%s" 2>> "%s"
+"%s" backup --auto-init --config "%s" >> "%s" 2>> "%s"
 `, pathEnv, exePath, configPath, stdoutPath, stderrPath)
 
 	if err := os.WriteFile(batchFile, []byte(batchContent), 0o644); err != nil {

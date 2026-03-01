@@ -87,7 +87,7 @@ func runBackup(ctx context.Context, configPath string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, exe, "backup", "--config", configPath)
+	cmd := exec.CommandContext(ctx, exe, "backup", "--auto-init", "--config", configPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
