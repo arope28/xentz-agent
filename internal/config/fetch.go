@@ -83,6 +83,11 @@ func FetchFromServer(serverURL, deviceAPIKey string) (Config, error) {
 		return Config{}, fmt.Errorf("device is disabled by server (kill-switch activated)")
 	}
 
+	// Ensure identity fields are present for scoping
+	if strings.TrimSpace(cfg.TenantID) == "" || strings.TrimSpace(cfg.DeviceID) == "" {
+		return Config{}, fmt.Errorf("server config missing required identity fields (tenant_id/device_id)")
+	}
+
 	// Validate required fields
 	if len(cfg.Include) == 0 {
 		return Config{}, fmt.Errorf("server config missing required field: include")
@@ -404,12 +409,12 @@ func validatePassword(repository, passwordFile string) error {
 		"RESTIC_REPOSITORY="+repository,
 		"RESTIC_PASSWORD_FILE="+expandHomePath(passwordFile),
 	)
-	
+
 	// Capture output to check for password errors
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
-	
+
 	if err := cmd.Run(); err != nil {
 		errStr := out.String()
 		// Check if error is due to wrong password
@@ -419,7 +424,7 @@ func validatePassword(repository, passwordFile string) error {
 		// Other errors (network, repo doesn't exist) are not password validation failures
 		// We'll let those pass through - they'll be caught during actual backup
 	}
-	
+
 	return nil
 }
 
