@@ -71,7 +71,7 @@ func RunRetention(ctx context.Context, cfg config.Config) state.LastRun {
 	}
 
 	cmd := exec.CommandContext(ctx, "restic", args...)
-	cmd.Env = append(cmd.Environ(), resticEnv(cfg, resticPassword)...)
+	cmd.Env = append(cmd.Environ(), ResticEnv(cfg, resticPassword)...)
 
 	// Stream output to both terminal and buffer for error reporting
 	// This allows users to see progress during long-running prune operations
@@ -111,7 +111,7 @@ func checkRepositoryConnectivity(ctx context.Context, cfg config.Config, resticP
 	// Use a quick "snapshots" command with --last 1 to test connectivity
 	// This is faster than "cat config" and will fail quickly if unreachable
 	cmd := exec.CommandContext(ctx, "restic", "snapshots", "--last", "1")
-	cmd.Env = append(cmd.Environ(), resticEnv(cfg, resticPassword)...)
+	cmd.Env = append(cmd.Environ(), ResticEnv(cfg, resticPassword)...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out

@@ -55,7 +55,7 @@ func Run(ctx context.Context, cfg config.Config, autoInit bool) state.LastRun {
 	args = append(args, cfg.Include...)
 
 	cmd := exec.CommandContext(ctx, "restic", args...)
-	cmd.Env = append(cmd.Environ(), resticEnv(cfg, resticPassword)...)
+	cmd.Env = append(cmd.Environ(), ResticEnv(cfg, resticPassword)...)
 
 	var out bytes.Buffer
 	var jsonOut bytes.Buffer
@@ -93,7 +93,7 @@ func Run(ctx context.Context, cfg config.Config, autoInit bool) state.LastRun {
 func checkOrInitRepo(ctx context.Context, cfg config.Config, autoInit bool, resticPassword string) error {
 	// "restic cat config" succeeds only if repo exists and is initialized
 	cmd := exec.CommandContext(ctx, "restic", "cat", "config")
-	cmd.Env = append(cmd.Environ(), resticEnv(cfg, resticPassword)...)
+	cmd.Env = append(cmd.Environ(), ResticEnv(cfg, resticPassword)...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -142,7 +142,9 @@ func checkOrInitRepo(ctx context.Context, cfg config.Config, autoInit bool, rest
 	return nil
 }
 
-func resticEnv(cfg config.Config, resticPassword string) []string {
+// ResticEnv returns environment variables for restic (repository and password).
+// Used by backup and by the restore command. resticPassword may be empty if cfg.Restic.PasswordFile is set.
+func ResticEnv(cfg config.Config, resticPassword string) []string {
 	env := []string{"RESTIC_REPOSITORY=" + cfg.Restic.Repository}
 	if resticPassword != "" {
 		env = append(env, "RESTIC_PASSWORD="+resticPassword)
@@ -247,9 +249,11 @@ func parseResticJSON(data []byte) *resticStats {
 		stats.BytesTotal = int64(bytesTotal)
 	}
 
-	// Extract data_added_bytes (bytes_added, not bytes_added_packed)
-	if bytesAdded, ok := getFloat64(summary, "bytes_added"); ok {
+	// Extract data_added_bytes: restic uses "data_added" in summary JSON
+	if bytesAdded, ok := getFloat64(summary, "data_added"); ok {
 		stats.DataAddedBytes = int64(bytesAdded)
+	} else if bytesAdded, ok := getFloat64(summary, "bytes_added"); ok {
+		stats.DataAddedBytes = int64(bytesAdded) // fallback for older restic
 	}
 
 	// Extract snapshot_id

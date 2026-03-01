@@ -29,6 +29,25 @@ import (
 	"xentz-agent/internal/state"
 )
 
+// formatBytes returns a human-readable size (e.g. "1.5 KB", "23 MB"). Uses 1024 base.
+func formatBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for v := n / unit; v >= unit; v /= unit {
+		div *= unit
+		exp++
+	}
+	units := []string{"KB", "MB", "GB", "TB"}
+	s := float64(n) / float64(div)
+	if s == float64(int64(s)) {
+		return fmt.Sprintf("%d %s", int64(s), units[exp])
+	}
+	return fmt.Sprintf("%.1f %s", s, units[exp])
+}
+
 func usage() {
 	fmt.Print(`xentz-agent - Backup Agent
 
@@ -40,6 +59,7 @@ Commands:
   diagnostics Create a support bundle (logs + config checksum + state)
   local-ui    Run localhost-only status UI
   backup      Run one backup now (used by scheduler)
+  restore     List/browse snapshots, find files, stats, check repo, or restore (restic wrapper)
   retention   Run retention/prune policy (forget old snapshots)
   status      Show last run status
   config      Manage backup paths (add/remove include/exclude paths)
@@ -56,6 +76,13 @@ Examples:
   
   xentz-agent backup
   xentz-agent backup --auto-init  # Auto-initialize repository if missing (use with caution)
+  xentz-agent restore snapshots
+  xentz-agent restore find /path/to/file
+  xentz-agent restore ls latest
+  xentz-agent restore stats
+  xentz-agent restore check
+  xentz-agent restore <snapshot_id> --target /tmp/restore [--path /path/to/file]
+  xentz-agent restore dump <snapshot_id> /path/in/snapshot --output ./file
   xentz-agent retention
   xentz-agent status
   
@@ -78,9 +105,21 @@ Examples:
   xentz-agent local-ui --addr 127.0.0.1:9800
 
 Flags (backup):
+  --config       Config path override (default: <CONFIG_DIR>/config.json)
   --auto-init    Automatically initialize repository if it doesn't exist (default: false)
                  WARNING: Only use if you're certain the repository URL is correct.
                  Without this flag, backup will fail if repository doesn't exist.
+
+Flags (restore):
+  --config       Config path override (default: <CONFIG_DIR>/config.json)
+  Subcommands:    snapshots | find <path> | ls <snapshot_id> [path] | stats [snapshot_id] | check |
+                  <snapshot_id> --target <dir> [--path <path>] | dump <snapshot_id> <path> [--output <file>]
+
+Flags (retention):
+  --config       Config path override (default: <CONFIG_DIR>/config.json)
+
+Flags (status):
+  --config       Config path override (default: <CONFIG_DIR>/config.json)
 
 Flags (install):
   --token         Install token for enrollment (recommended, provided by control plane)
@@ -210,6 +249,51 @@ func loadEnrollment(cfgFile, mode string) (config.Config, string, error) {
 		return cfg, "", err
 	}
 	return cfg, strings.TrimSpace(apiKey), nil
+}
+
+// loadConfigAndPasswordForRestic loads config (same as backup/retention) and returns
+// the config and restic password (empty if using password file). Used by the restore command.
+func loadConfigAndPasswordForRestic(cfgFile string) (config.Config, string) {
+	localCfg, apiKey, err := loadEnrollment(cfgFile, "")
+	if err != nil {
+		log.Fatalf("load enrollment: %v", err)
+	}
+	localCfg.DeviceAPIKey = apiKey
+
+	var cfg config.Config
+	if localCfg.DeviceAPIKey != "" && localCfg.ServerURL != "" {
+		fetchedCfg, fetchErr := config.LoadWithFallback(localCfg.ServerURL, localCfg.DeviceAPIKey)
+		if fetchErr != nil {
+			log.Fatalf("failed to load config: %v", fetchErr)
+		}
+		cfg = fetchedCfg
+		cfg.TenantID = localCfg.TenantID
+		cfg.DeviceID = localCfg.DeviceID
+		cfg.DeviceAPIKey = localCfg.DeviceAPIKey
+		cfg.ServerURL = localCfg.ServerURL
+		cfg.UserID = localCfg.UserID
+		cfg.Restic.PasswordFile = localCfg.Restic.PasswordFile
+		if err := config.EnsurePasswordFile(cfg, localCfg.ServerURL, localCfg.DeviceAPIKey); err != nil {
+			log.Fatalf("password validation failed: %v", err)
+		}
+	} else {
+		if localCfg.Restic.Repository == "" {
+			log.Fatalf("missing config and no enrollment (run `xentz-agent install` or `xentz-agent recover`)")
+		}
+		cfg = localCfg
+	}
+	if cfg.Enabled != nil && !*cfg.Enabled {
+		log.Fatalf("device is disabled by server (kill-switch activated)")
+	}
+	var resticPassword string
+	if cfg.Restic.PasswordFile == "" {
+		pw, err := config.GetResticPassword(cfg)
+		if err != nil {
+			log.Fatalf("restic password: %v", err)
+		}
+		resticPassword = pw
+	}
+	return cfg, resticPassword
 }
 
 func replaceBinary(newPath string) error {
@@ -906,8 +990,142 @@ func main() {
 				"snapshot_id":      res.SnapshotID,
 			})
 		}
-		log.Printf("backup ok ✅: duration=%s bytes_sent=%d", res.Duration, res.BytesSent)
+		log.Printf("backup ok ✅: duration=%s data_added=%s", res.Duration, formatBytes(res.BytesSent))
 		return
+
+	case "restore":
+		rfs := flag.NewFlagSet("restore", flag.ExitOnError)
+		restoreConfigPath := rfs.String("config", "", "Config path override")
+		if err := rfs.Parse(os.Args[2:]); err != nil {
+			log.Fatalf("parse flags: %v", err)
+		}
+		cfgFile, err := config.ResolvePath(*restoreConfigPath)
+		if err != nil {
+			log.Fatalf("resolve config path: %v", err)
+		}
+		restoreCfg, resticPW := loadConfigAndPasswordForRestic(cfgFile)
+		if _, err := exec.LookPath("restic"); err != nil {
+			log.Fatalf("restic not found in PATH (install restic first)")
+		}
+		env := append(os.Environ(), backup.ResticEnv(restoreCfg, resticPW)...)
+
+		args := rfs.Args()
+		if len(args) == 0 {
+			log.Fatalf("usage: xentz-agent restore snapshots | find <path> | ls <snapshot_id> [path] | stats [snapshot_id] | check | <snapshot_id> --target <dir> [--path <path>] | dump <snapshot_id> <path> [--output <file>]")
+		}
+		switch args[0] {
+		case "snapshots":
+			cmd := exec.CommandContext(context.Background(), "restic", "snapshots")
+			cmd.Env = env
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				log.Fatalf("restic snapshots: %v", err)
+			}
+			return
+		case "find":
+			if len(args) < 2 {
+				log.Fatalf("usage: xentz-agent restore find <path>")
+			}
+			cmd := exec.CommandContext(context.Background(), "restic", append([]string{"find", args[1]}, args[2:]...)...)
+			cmd.Env = env
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				log.Fatalf("restic find: %v", err)
+			}
+			return
+		case "ls":
+			if len(args) < 2 {
+				log.Fatalf("usage: xentz-agent restore ls <snapshot_id> [path]")
+			}
+			resticArgs := []string{"ls", args[1]}
+			if len(args) > 2 {
+				resticArgs = append(resticArgs, args[2:]...)
+			}
+			cmd := exec.CommandContext(context.Background(), "restic", resticArgs...)
+			cmd.Env = env
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				log.Fatalf("restic ls: %v", err)
+			}
+			return
+		case "stats":
+			resticArgs := []string{"stats"}
+			if len(args) > 1 {
+				resticArgs = append(resticArgs, args[1:]...)
+			}
+			cmd := exec.CommandContext(context.Background(), "restic", resticArgs...)
+			cmd.Env = env
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				log.Fatalf("restic stats: %v", err)
+			}
+			return
+		case "check":
+			cmd := exec.CommandContext(context.Background(), "restic", "check")
+			cmd.Env = env
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				log.Fatalf("restic check: %v", err)
+			}
+			return
+		case "dump":
+			// restore dump <snapshot_id> <path> [--output <file>]
+			fs := flag.NewFlagSet("restore dump", flag.ExitOnError)
+			outPath := fs.String("output", "", "Write file to path (default: stdout)")
+			if err := fs.Parse(args[1:]); err != nil {
+				log.Fatalf("parse flags: %v", err)
+			}
+			if fs.NArg() < 2 {
+				log.Fatalf("usage: xentz-agent restore dump <snapshot_id> <path> [--output <file>]")
+			}
+			snapshotID, pathInSnapshot := fs.Arg(0), fs.Arg(1)
+			cmd := exec.CommandContext(context.Background(), "restic", "dump", snapshotID, pathInSnapshot)
+			cmd.Env = env
+			if *outPath != "" {
+				f, err := os.Create(*outPath)
+				if err != nil {
+					log.Fatalf("create output file: %v", err)
+				}
+				defer f.Close()
+				cmd.Stdout = f
+			} else {
+				cmd.Stdout = os.Stdout
+			}
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				log.Fatalf("restic dump: %v", err)
+			}
+			return
+		default:
+			// restore <snapshot_id> --target <dir> [--path <path>]
+			snapshotID := args[0]
+			rfs := flag.NewFlagSet("restore", flag.ExitOnError)
+			target := rfs.String("target", "", "Directory to restore into")
+			pathInSnapshot := rfs.String("path", "", "Restore only this path (optional)")
+			if err := rfs.Parse(args[1:]); err != nil {
+				log.Fatalf("parse flags: %v", err)
+			}
+			if *target == "" {
+				log.Fatalf("usage: xentz-agent restore <snapshot_id> --target <dir> [--path <path>]")
+			}
+			restoreArgs := []string{"restore", snapshotID, "--target", *target}
+			if *pathInSnapshot != "" {
+				restoreArgs = append(restoreArgs, "--include", *pathInSnapshot)
+			}
+			cmd := exec.CommandContext(context.Background(), "restic", restoreArgs...)
+			cmd.Env = env
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				log.Fatalf("restic restore: %v", err)
+			}
+			return
+		}
 
 	case "retention":
 		fs := flag.NewFlagSet(cmd, flag.ExitOnError)
@@ -1121,8 +1339,8 @@ func main() {
 		if !ok {
 			fmt.Println("No backups have run yet.")
 		} else {
-			fmt.Printf("Last backup:\n  status: %s\n  time:   %s\n  dur:    %s\n  bytes:  %d\n  error:  %s\n",
-				last.Status, last.TimeUTC, last.Duration, last.BytesSent, last.Error)
+			fmt.Printf("Last backup:\n  status: %s\n  time:   %s\n  dur:    %s\n  data_added: %s\n  error:  %s\n",
+				last.Status, last.TimeUTC, last.Duration, formatBytes(last.BytesSent), last.Error)
 		}
 
 		// Show retention status
