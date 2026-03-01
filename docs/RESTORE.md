@@ -90,7 +90,7 @@ xentz-agent restore --config /path/to/config.json snapshots
 1. Create or change a file under one of your backup include paths.
 2. Run a backup: `xentz-agent backup --auto-init` (or wait for the scheduled run).
 3. Change or delete the file.
-4. List snapshots: `xentz-agent restore snapshots`.
+4. List snapshots: `xentz-agent restore snapshots ls`.
 5. Restore the file from the snapshot you took in step 2 (e.g. `restore dump <id> /path/to/file --output ./restored`).
 6. Confirm the restored content matches the version from before step 3.
 
