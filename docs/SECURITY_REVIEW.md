@@ -3,7 +3,7 @@
 ## Critical Issues
 
 ### 1. Path Traversal Vulnerability in DeleteSpooledReport
-**Location**: `internal/report/report.go:219-230`
+**Location**: `internal/report/report.go` (DeleteSpooledReport)
 
 **Issue**: The `filename` parameter is not validated, allowing path traversal attacks:
 ```go
@@ -48,12 +48,9 @@ func DeleteSpooledReport(filename string) error {
 ```
 
 ### 2. Filename Injection in SpoolReport
-**Location**: `internal/report/report.go:127-130`
+**Location**: `internal/report/report.go` (SpoolReport)
 
-**Issue**: User-controlled data (job, status) is used in filename without sanitization:
-```go
-filename := fmt.Sprintf("%d-%s-%s.json", timestamp, report.Job, report.Status)
-```
+**Issue (fixed)**: User-controlled data (job, status) was used in filename without sanitization. Now sanitized via `sanitize(report.Job)` and `sanitize(report.Status)`.
 
 **Risk**: If job or status contains path separators or special characters, could create files outside intended directory.
 
@@ -153,9 +150,9 @@ func validateServerURL(url string) error {
 - File paths that reveal user structure
 
 **Examples**:
-- `internal/config/fetch.go:44`: Error message mentions "device API key" but doesn't leak the key itself (good)
-- `internal/report/report.go:153`: Logs error but doesn't include API key (good)
-- `cmd/xentz-agent/main.go:148`: Logs repository path which might be sensitive
+- `internal/config/fetch.go`: Error message mentions "device API key" but doesn't leak the key itself (good)
+- `internal/report/report.go`: Logs error but doesn't include API key (good)
+- `cmd/xentz-agent/main.go`: Take care not to log repository path (may be sensitive)
 
 **Fix**: Ensure sensitive data is never logged:
 ```go

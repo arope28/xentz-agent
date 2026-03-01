@@ -26,7 +26,7 @@ The xentz-agent is a backup agent that:
 │  - Reads install token              │
 └──────┬──────────────────────────────┘
        │
-       │ 2. POST /v1/install
+       │ 2. POST /control/v1/install
        │    Authorization: Bearer <token>
        │    Body: { user_id, metadata: { hostname, os, arch } }
        ▼
@@ -64,7 +64,7 @@ The xentz-agent is a backup agent that:
 │  - Loads local config               │
 └──────┬──────────────────────────────┘
        │
-       │ 2. GET /v1/config
+       │ 2. GET /control/v1/config
        │    Authorization: Bearer <device_api_key>
        ▼
 ┌─────────────────────────────────────┐
@@ -90,7 +90,7 @@ The xentz-agent is a backup agent that:
 │  - Sends oldest first (max 20)      │
 └──────┬──────────────────────────────┘
        │
-       │ 5. POST /v1/report (for each pending)
+       │ 5. POST /control/v1/report (for each pending)
        │    Authorization: Bearer <device_api_key>
        ▼
 ┌─────────────────────────────────────┐
@@ -128,7 +128,7 @@ The xentz-agent is a backup agent that:
 │  - Creates report payload           │
 └──────┬──────────────────────────────┘
        │
-       │ 9. POST /v1/report
+       │ 9. POST /control/v1/report
        │    Authorization: Bearer <device_api_key>
        │    Body: { device_id, job: "backup", status, metrics, ... }
        ▼
@@ -163,7 +163,7 @@ The xentz-agent is a backup agent that:
 │  - Loads local config               │
 └──────┬──────────────────────────────┘
        │
-       │ 2. GET /v1/config
+       │ 2. GET /control/v1/config
        │    Authorization: Bearer <device_api_key>
        ▼
 ┌─────────────────────────────────────┐
@@ -222,7 +222,7 @@ The xentz-agent is a backup agent that:
 │  LoadWithFallback()                 │
 └──────┬──────────────────────────────┘
        │
-       │ 1. Attempt: GET /v1/config
+       │ 1. Attempt: GET /control/v1/config
        │    Authorization: Bearer <device_api_key>
        ▼
 ┌─────────────────────────────────────┐
@@ -254,7 +254,7 @@ The xentz-agent is a backup agent that:
 │  SendReportWithSpool()              │
 └──────┬──────────────────────────────┘
        │
-       │ 1. Attempt: POST /v1/report
+       │ 1. Attempt: POST /control/v1/report
        │    Authorization: Bearer <device_api_key>
        ▼
 ┌─────────────────────────────────────┐
@@ -326,17 +326,17 @@ Authorization: Bearer <device_api_key>
 
 ### Endpoints
 
-1. **POST /v1/install** (Enrollment)
+1. **POST /control/v1/install** (Enrollment)
    - Request: `{ user_id?, metadata: { hostname, os, arch } }`
    - Response: `{ tenant_id, device_id, device_api_key, repo_path, password? }`
    - Auth: Install token (one-time)
 
-2. **GET /v1/config** (Config Fetch)
+2. **GET /control/v1/config** (Config Fetch)
    - Request: None (auth via header)
    - Response: `{ schedule, include, exclude, restic, retention }`
    - Auth: Device API key
 
-3. **POST /v1/report** (Reporting)
+3. **POST /control/v1/report** (Reporting)
    - Request: `{ device_id, job, started_at, finished_at, status, duration_ms, metrics, error? }`
    - Response: `200 OK` or error
    - Auth: Device API key

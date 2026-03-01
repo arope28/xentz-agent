@@ -13,7 +13,9 @@ xentz-agent/
 │   │   └── retention.go             # Retention and prune policies
 │   ├── config/                      # Configuration management
 │   │   ├── config.go                # Config struct and file I/O
-│   │   └── fetch.go                 # Server config fetching
+│   │   ├── fetch.go                 # Server config fetching
+│   │   ├── refresh.go               # Periodic config auto-refresh (StartAutoRefresh)
+│   │   └── secretstore.go           # Device API key get/store (wraps secretstore)
 │   ├── enroll/                      # Device enrollment
 │   │   └── enroll.go                # Token-based enrollment logic
 │   ├── install/                     # Cross-platform installation
@@ -68,8 +70,8 @@ xentz-agent/
 - Handles errors and timeouts
 
 **Key Functions:**
-- `Run(ctx, cfg)` - Main backup execution
-- `ensureRepoInitialized(ctx, cfg)` - Repository initialization check
+- `Run(ctx, cfg, autoInit bool)` - Main backup execution
+- `checkOrInitRepo(ctx, cfg, autoInit, resticPassword)` - Repository init check (optional init)
 
 #### `internal/backup/retention.go`
 **Purpose:** Executes restic retention and prune operations.
@@ -106,8 +108,8 @@ xentz-agent/
 - `Retention` - Retention policy configuration
 
 **Key Functions:**
-- `Load(path)` - Load config from file
-- `Save(cfg, path)` - Save config to file
+- `Read(path)` - Read config from file
+- `Write(path, cfg)` - Write config to file
 - `WriteCached(cfg)` - Write cached config
 - `ReadCached()` - Read cached config
 
@@ -115,7 +117,7 @@ xentz-agent/
 **Purpose:** Fetches configuration from the control plane server.
 
 **Responsibilities:**
-- Makes authenticated requests to `GET /v1/config`
+- Makes authenticated requests to `GET /control/v1/config`
 - Uses `device_api_key` for authentication
 - Implements SSRF protection (blocks localhost, validates schemes)
 - Caches successful config fetches
@@ -134,7 +136,7 @@ xentz-agent/
 
 **Responsibilities:**
 - Collects device metadata (hostname, OS, architecture)
-- Sends enrollment request to `POST /v1/install`
+- Sends enrollment request to `POST /control/v1/install`
 - Uses install token for initial authentication
 - Receives server-assigned identifiers (tenant_id, device_id, device_api_key)
 - Stores enrollment data in config
@@ -189,7 +191,7 @@ xentz-agent/
 
 **Responsibilities:**
 - Creates report payloads with metrics
-- Sends reports to `POST /v1/report`
+- Sends reports to `POST /control/v1/report`
 - Implements local spooling for failed sends
 - Retries spooled reports on next run (oldest first, max 20)
 - Cleans up old spooled reports (older than 30 days)
@@ -198,10 +200,10 @@ xentz-agent/
 - Enforces spool directory size limits (100MB)
 
 **Key Functions:**
-- `SendReport(report, serverURL, deviceAPIKey)` - Send report immediately
-- `SendReportWithSpool(report, serverURL, deviceAPIKey)` - Send with spooling
+- `SendReport(serverURL, deviceAPIKey, report)` - Send report immediately
+- `SendReportWithSpool(serverURL, deviceAPIKey, report)` - Send with spooling
 - `SendPendingReports(serverURL, deviceAPIKey)` - Retry spooled reports
-- `CleanupOldReports()` - Remove old spooled reports
+- `CleanupOldReports(maxAge)` - Remove old spooled reports
 - `SpoolReport(report)` - Write report to spool directory
 
 ### State Management
@@ -219,8 +221,10 @@ xentz-agent/
 - `LastRun` - Last run information structure
 
 **Key Functions:**
-- `SaveLastRun(run, jobType)` - Save last run state
-- `LoadLastRun(jobType)` - Load last run state
+- `SaveLastRun(r)` - Save last backup run state (last_run.json)
+- `LoadLastRun()` - Load last backup run state
+- `SaveLastRetentionRun(r)` - Save last retention run state (last_retention.json)
+- `LoadLastRetentionRun()` - Load last retention run state
 - `NewLastRunSuccessWithStats(...)` - Create success state with metrics
 - `NewLastRunError(...)` - Create error state
 

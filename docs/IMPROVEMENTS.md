@@ -90,8 +90,8 @@ err := validation.ValidateServerURLStrict("https://control.example.com") // ✅ 
 - **Status:** ✅ Verified - Called in both backup and retention commands
 
 **Verification:**
-- ✅ Called in `backup` command: `cmd/xentz-agent/main.go:334`
-- ✅ Called in `retention` command: `cmd/xentz-agent/main.go:430`
+- ✅ Called in `backup` command: `cmd/xentz-agent/main.go`
+- ✅ Called in `retention` command: `cmd/xentz-agent/main.go`
 - ✅ Runs even when server is unreachable (local file operations)
 - ✅ Runs after sending reports (prevents accumulation)
 
@@ -101,8 +101,8 @@ err := validation.ValidateServerURLStrict("https://control.example.com") // ✅ 
 3. Consider adding metrics/logging for cleanup operations (optional enhancement)
 
 **Implementation Notes:**
-- Function: `internal/report/report.go:317`
-- Called in: `cmd/xentz-agent/main.go:334` (backup) and `:430` (retention)
+- Function: `internal/report/report.go` (CleanupOldReports)
+- Called in backup and retention command handlers in `cmd/xentz-agent/main.go`
 - Max age: 30 days (configurable via parameter)
 
 ---
@@ -154,11 +154,11 @@ err := validation.ValidateServerURLStrict("https://control.example.com") // ✅ 
 
 ## Implementation Checklist
 
-- [ ] Add `--auto-init` flag or restrict auto-init to install only
-- [ ] Document private IP allowance rationale (or add strict mode)
-- [ ] Verify `CleanupOldReports()` is called in backup and retention flows
+- [x] Add `--auto-init` flag or restrict auto-init to install only
+- [x] Document private IP allowance rationale (or add strict mode)
+- [x] Verify `CleanupOldReports()` is called in backup and retention flows
 - [ ] Add OS credential storage integration (future enhancement)
-- [ ] Ensure `dist/` remains in `.gitignore` (already done ✅)
+- [x] Ensure `dist/` remains in `.gitignore` (already done ✅)
 
 ---
 
