@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -37,6 +38,7 @@ func Start(addr string, cfgPath string) error {
 
 func (s *Server) serve(cfgPath string) error {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/", s.handleRoot())
 	mux.HandleFunc("/status", s.withAuth(s.handleStatus(cfgPath)))
 	mux.HandleFunc("/config", s.withAuth(s.handleConfig(cfgPath)))
 	mux.HandleFunc("/runs", s.withAuth(s.handleRuns()))
@@ -44,9 +46,43 @@ func (s *Server) serve(cfgPath string) error {
 	return http.ListenAndServe(s.addr, mux)
 }
 
+// handleRoot returns a simple HTML page with usage and working links (token in query for browser).
+func (s *Server) handleRoot() http.HandlerFunc {
+	cfgDir, _ := paths.ConfigDir("")
+	tokenPath := filepath.Join(cfgDir, tokenFileName)
+	// Token in query so links work in browser (server binds to localhost by default).
+	tok := url.QueryEscape(s.token)
+	html := fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>xentz-agent Local UI</title></head>
+<body>
+  <h1>xentz-agent Local UI</h1>
+  <p>Token file: <code>%s</code></p>
+  <ul>
+    <li><a href="/status?token=%s">/status</a> – last backup and retention</li>
+    <li><a href="/runs?token=%s">/runs</a> – run history</li>
+    <li><a href="/config?token=%s">/config</a> – config (secrets redacted)</li>
+    <li><a href="/diagnostics?token=%s">/diagnostics</a> – create diagnostics bundle</li>
+  </ul>
+  <p>Example: <code>curl -H "X-Local-Token: $(cat %s)" http://127.0.0.1:9800/status</code></p>
+</body>
+</html>`, tokenPath, tok, tok, tok, tok, tokenPath)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(html))
+	}
+}
+
 func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get("X-Local-Token")
+		if token == "" {
+			token = r.URL.Query().Get("token") // allow ?token= for browser use
+		}
 		if token == "" || token != s.token {
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte("unauthorized"))

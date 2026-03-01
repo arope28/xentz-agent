@@ -233,4 +233,6 @@ Run a localhost-only status UI (read-only by default):
 xentz-agent local-ui --addr 127.0.0.1:9800
 ```
 
-Requests must include `X-Local-Token` from `<CONFIG_DIR>/local-ui.token`.
+Then open **http://127.0.0.1:9800/** in your browser. The root page shows links to `/status`, `/runs`, `/config`, and `/diagnostics` that work in the browser.
+
+For API access (e.g. curl), use the token from `<CONFIG_DIR>/local-ui.token` in the `X-Local-Token` header, or as `?token=YOUR_TOKEN` in the URL.
