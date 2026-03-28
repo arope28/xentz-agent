@@ -14,13 +14,13 @@ Avoid over-engineering v1.
 
 ## Billing & Money (Must)
 
-- [⚠️] Automated subscription billing (Stripe or equivalent) - Status: PARTIAL (webhook + enforcement scaffolding)
+- [⚠️] Automated subscription billing (Stripe or equivalent) - Status: PARTIAL (webhook + enforcement scaffolding; ops: `docs/STRIPE_BILLING_SETUP.md` in control plane)
 - [✅] Billing states exist: active / past_due / canceled - Status: DONE (control-plane schema + webhook handling)
 - [✅] Billing status automatically controls service access - Status: DONE (control-plane enforcement)
 - [✅] Grace period defined (e.g. 7 days) - Status: DONE (configurable)
 - [✅] Past-due automatically disables service - Status: DONE (post-grace enforcement)
 - [✅] Payment success automatically re-enables service - Status: DONE (webhook updates)
-- [⚠️] No manual billing enforcement required - Status: PARTIAL (depends on billing integration completeness)
+- [⚠️] No manual billing enforcement required - Status: PARTIAL (depends on Stripe Dashboard + metadata wiring per `docs/STRIPE_BILLING_SETUP.md`)
 
 ## Agent Enrollment
 
@@ -37,7 +37,7 @@ Avoid over-engineering v1.
 - [⚠️] Config tied to client_id - Status: PARTIAL (agent field; server enforcement)
 - [⚠️] Config tied to device_id - Status: PARTIAL (agent field; server enforcement)
 - [⚠️] Config tied to user_id - Status: PARTIAL (agent field; server enforcement)
-- [⚠️] Agent auto-fetches config on interval - every time it runs for now - Status: PARTIAL (auto-refresh helper added; not wired)
+- [✅] Agent auto-fetches config on interval - Status: DONE (default 5m when Windows service or `local-ui` runs; `XENTZ_CONFIG_REFRESH_INTERVAL` e.g. `5m`/`off`; launchd/systemd/cron paths still fetch on each scheduled run)
 - [✅] Config validation before use - Status: DONE (agent/control-plane)
 - [✅] Cached last-known-good config fallback - Status: DONE (agent/control-plane)
 - [✅] One device config cannot affect another device - Status: DONE (agent/control-plane)
@@ -47,7 +47,7 @@ Avoid over-engineering v1.
 - [✅] Server-side disable (no client machine access) - Status: DONE (agent/control-plane)
 - [✅] Disable overrides cached config - Status: DONE (agent/control-plane)
 - [✅] API key revocation OR enabled=false flag exists - Status: DONE (agent/control-plane)
-- [⚠️] Disable takes effect within minutes - Status: PARTIAL (agent checks on run; schedule outside repo)
+- [⚠️] Disable takes effect within minutes - Status: PARTIAL (kill-switch cached on refresh interval when Windows service / local-ui; otherwise next scheduled backup/retention)
 - [✅] Disabling one client/device cannot affect others - Status: DONE (agent/control-plane)
 
 ## Monitoring & Alerts
@@ -66,9 +66,11 @@ Avoid over-engineering v1.
 
 ### Alerts (Actionable Only)
 
+**Delivery:** Prometheus + Alertmanager must be deployed and fire-drilled; see control plane `docs/OPS_RUNBOOK_ALERTS.md` (rules under `deploy/prometheus/alerts.yml`).
+
 #### Critical Alerts (Must Have Before Selling)
 
-- [⚠️] Alert: agent silent > 24 hours (workstations) - Status: PARTIAL (rules exist; delivery not wired)
+- [⚠️] Alert: agent silent > 24 hours (workstations) - Status: PARTIAL (rules exist; delivery ops: control plane `docs/OPS_RUNBOOK_ALERTS.md`)
 - [⚠️] Alert: agent silent > 12 hours (servers) - Status: PARTIAL (rules exist; delivery not wired)
 - [⚠️] Alert: backup job failure - Status: PARTIAL (rules exist; delivery not wired)
 - [⚠️] Alert: repeated backup failures (2+ consecutive failures) - Status: PARTIAL (rules exist; delivery not wired)
@@ -102,7 +104,7 @@ Avoid over-engineering v1.
 - [✅] Monthly backup report generated - Status: DONE (control-plane)
 - [⚠️] Quarterly restore test performed and documented - Status: PARTIAL (control-plane support)
 - [⚠️] Backup scope confirmed with client - Status: PARTIAL (control-plane support)
-- [⚠️] Recovery procedure documented and client-safe - Status: PARTIAL (control-plane support)
+- [⚠️] Recovery procedure documented and client-safe - Status: PARTIAL (`docs/CLIENT_RECOVERY_GUIDE.md` here + control-plane `docs/RECOVERY.md` for tokens)
 
 ### Go-Live Confirmation
 
@@ -110,7 +112,7 @@ Avoid over-engineering v1.
 - [⚠️] Alert recipients confirmed (primary + backup contact) - Status: PARTIAL (go-live checklist support)
 - [⚠️] One successful file-level restore completed - Status: PARTIAL (go-live checklist support)
 - [⚠️] One successful folder or system restore completed - Status: PARTIAL (go-live checklist support)
-- [⚠️] Backup & recovery explanation approved for client use - Status: PARTIAL (go-live checklist support)
+- [⚠️] Backup & recovery explanation approved for client use - Status: PARTIAL (`docs/CLIENT_RECOVERY_GUIDE.md` + go-live checklist)
 
 ## Logging (Support Only)
 
@@ -128,14 +130,14 @@ Avoid over-engineering v1.
 - [✅] Agent enrollment - Status: DONE (agent/control-plane)
 - [✅] Config delivery - Status: DONE (agent/control-plane)
 - [✅] Kill switch - Status: DONE (agent/control-plane)
-- [⚠️] Monitoring and alerts - Status: PARTIAL (alerts delivery not wired)
+- [⚠️] Monitoring and alerts - Status: PARTIAL (Prometheus rules + Alertmanager; delivery verified per ops runbook in control plane)
 
 **Manual for v1**
 
-- [ ] Client onboarding steps - Status: NOT IN SYSTEM
+- [⚠️] Client onboarding steps - Status: PARTIAL (SOP: `docs/CLIENT_ONBOARDING_SOP.md`; not in-product wizard)
 - [ ] Pricing changes - Status: NOT IN SYSTEM
-- [ ] Restores - Status: NOT IN SYSTEM
-- [ ] Client communication - Status: NOT IN SYSTEM
+- [⚠️] Restores - Status: PARTIAL (agent CLI `restore`; guided: `docs/CLIENT_RECOVERY_GUIDE.md`; not push-button portal)
+- [⚠️] Client communication - Status: PARTIAL (SOP templates in `docs/CLIENT_ONBOARDING_SOP.md`)
 
 ## Not Required Before Selling
 
@@ -153,4 +155,4 @@ Avoid over-engineering v1.
 - [⚠️] Non-payment disables service automatically - Status: PARTIAL (billing enforcement + grace)
 - [⚠️] One client cannot affect another - Status: PARTIAL (agent isolation; server enforcement assumed)
 - [⚠️] Backup failures are detected automatically - Status: PARTIAL (alerts + Alertmanager setup required)
-- [ ] Restores are possible when requested - Status: NOT IN SYSTEM
+- [⚠️] Restores are possible when requested - Status: PARTIAL (CLI `restore` + `docs/CLIENT_RECOVERY_GUIDE.md`; operator drills via go-live checklist API)

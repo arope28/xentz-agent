@@ -14,7 +14,7 @@ xentz-agent/
 │   ├── config/                      # Configuration management
 │   │   ├── config.go                # Config struct and file I/O
 │   │   ├── fetch.go                 # Server config fetching
-│   │   ├── refresh.go               # Periodic config auto-refresh (StartAutoRefresh)
+│   │   ├── refresh.go               # Periodic config refresh (Windows service + local-ui; env XENTZ_CONFIG_REFRESH_INTERVAL)
 │   │   └── secretstore.go           # Device API key get/store (wraps secretstore)
 │   ├── enroll/                      # Device enrollment
 │   │   └── enroll.go                # Token-based enrollment logic

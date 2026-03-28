@@ -169,6 +169,31 @@ Run PowerShell as Administrator and execute:
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
 
+### Backup fails: "operation not permitted" or "com.apple.fileprovider.detached" (macOS)
+
+When the **scheduled** backup runs (e.g. via LaunchAgent), macOS restricts access to protected folders like `~/Documents` and to iCloud/File Provider items. You may see:
+
+- `open .../Documents/...: operation not permitted`
+- `can not obtain extended attribute com.apple.fileprovider.detached#B for .../Documents`
+
+**Option 1 — Grant Full Disk Access (if you need to back up Documents):**
+
+1. Open **System Settings → Privacy & Security → Full Disk Access**.
+2. Click **+** and add the **xentz-agent** binary (e.g. `/usr/local/bin/xentz-agent`).
+3. If restic is invoked directly elsewhere, add **restic** as well.
+4. Restart the scheduled job (e.g. `launchctl unload` then `load` the LaunchAgent) or reboot.
+
+**Option 2 — Exclude the problematic path (if you don’t need it in backup):**
+
+Add an exclude so the agent doesn’t try to read that path. In your server-driven config or local config, set `exclude` (restic-style patterns), for example:
+
+- Exclude only the failing item:  
+  `exclude: ["/Users/yourname/Documents/backup_test"]`
+- Exclude all of Documents:  
+  `exclude: ["/Users/yourname/Documents"]`
+
+Then run a backup again (or wait for the next scheduled run). The agent already passes `exclude` through to restic.
+
 ## Configuration
 
 ### Token-Based Enrollment (Recommended)

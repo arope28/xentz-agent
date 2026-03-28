@@ -163,8 +163,9 @@ GOOS=linux GOARCH=amd64 go build -o xentz-agent ./cmd/xentz-agent
 
 ### Configuration Management
 - **Server-driven configuration**: The agent fetches configuration from the control plane on every backup/retention run
+- **Periodic refresh**: When the **Windows service** or **`local-ui`** is running, config is also refreshed on an interval (default 5 minutes) so kill-switch and policy updates apply between scheduled backups. Override with `XENTZ_CONFIG_REFRESH_INTERVAL` (Go duration, e.g. `15m`; `off` disables).
 - **Local caching**: Config is cached locally and used as fallback if the server is unreachable
-- **Dynamic updates**: Configuration changes (backup paths, retention policies) are applied automatically on next run
+- **Dynamic updates**: Configuration changes (backup paths, retention policies) are applied on the next fetch (scheduled run and/or periodic refresh when enabled)
 
 ### Reporting & Logging
 - **Automatic reporting**: Backup and retention runs are automatically reported to the control plane with detailed metrics:
@@ -257,3 +258,7 @@ See the `docs/` directory for detailed documentation:
 - `INSTALL.md` - Installation instructions
 - `PLATFORMS.md` - Platform-specific details
 - `SECURITY_REVIEW.md` - Security considerations
+- `PHASE0_SMOKE_CHECKLIST.md` - Pre-production enroll/backup/kill-switch smoke steps
+- `CLIENT_ONBOARDING_SOP.md` - Client onboarding standard procedure
+- `CLIENT_RECOVERY_GUIDE.md` - Client-safe restore and recovery-token guidance
+- `REQUIREMENTS.md` - V1 sell-ready checklist

@@ -16,6 +16,11 @@ import (
 	"xentz-agent/internal/config"
 )
 
+// handleConfigRefresh starts background config fetch/cache for kill-switch and policy updates between backup runs.
+func handleConfigRefresh(ctx context.Context, configPath string) {
+	config.StartAutoRefreshForConfigFile(ctx, configPath, "system")
+}
+
 const ServiceName = "XentzAgent"
 
 type serviceHandler struct {
@@ -40,6 +45,7 @@ func (s *serviceHandler) Execute(args []string, r <-chan svc.ChangeRequest, chan
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
+	handleConfigRefresh(ctx, s.configPath)
 	go s.runScheduler(ctx)
 
 	changes <- svc.Status{State: svc.Running, Accepts: accepts}

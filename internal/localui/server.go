@@ -1,6 +1,7 @@
 package localui
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -32,6 +33,8 @@ func Start(addr string, cfgPath string) error {
 	if err != nil {
 		return err
 	}
+	// While the local UI runs, keep config-cached.json updated for faster kill-switch visibility.
+	config.StartAutoRefreshForConfigFile(context.Background(), cfgPath, "")
 	s := &Server{addr: addr, token: token}
 	return s.serve(cfgPath)
 }
