@@ -208,6 +208,8 @@ xentz-agent install --token <install-token> \
   --include "/Users/yourname/Pictures"
 ```
 
+**`--server` URL:** Pass the control plane **public origin** only (scheme, host, and port if needed)—for example `https://control.example.com` or `http://local.xentz.test:8080` in front of nginx. The agent appends `/control/v1/...` itself; do **not** add a `/control` suffix to `--server`.
+
 The agent will:
 1. Enroll with the control plane using the install token
 2. Receive server-assigned identifiers (tenant_id, device_id, device_api_key)
@@ -221,7 +223,9 @@ Once enrolled, the agent automatically:
 - Uses cached configuration if the server is unreachable
 - Applies the latest settings (include paths, schedule, retention policy, etc.)
 
-You can update configuration on the control plane, and it will be applied on the next backup run automatically.
+If the **Windows service** or **`local-ui`** process is running, the agent also refreshes and caches config on a timer (default **5 minutes**) so kill-switch and policy changes can apply between scheduled runs. Override with `XENTZ_CONFIG_REFRESH_INTERVAL` (Go duration, e.g. `15m`; `off` disables).
+
+You can update configuration on the control plane; changes apply on the next fetch (after the next scheduled run and/or the next periodic refresh when enabled).
 
 ### Legacy Mode (Direct Repository)
 
@@ -257,6 +261,8 @@ Run a localhost-only status UI (read-only by default):
 ```bash
 xentz-agent local-ui --addr 127.0.0.1:9800
 ```
+
+While this command runs, enrolled agents also **poll the control plane** for config on the refresh interval (see `XENTZ_CONFIG_REFRESH_INTERVAL` above), updating the local cache used for backups.
 
 Then open **http://127.0.0.1:9800/** in your browser. The root page shows links to `/status`, `/runs`, `/config`, and `/diagnostics` that work in the browser.
 
