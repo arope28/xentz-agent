@@ -274,17 +274,43 @@ In legacy mode, configuration is stored locally and not fetched from a server.
 
 
 
-## User vs System Mode
+## Standard vs Managed Install
 
-By default, `install` uses user mode. To install in system mode:
+### Standard (recommended for most users)
+
+Use **user mode** and avoid `sudo`:
 
 ```bash
-xentz-agent install --mode system --token <install-token> --server <control-plane-url> --include "/path/to/backup"
+xentz-agent install --mode user --token <install-token> --server <control-plane-url> --include "/path/to/backup"
+```
+
+### Managed / IT deployment
+
+Use **system mode** (admin context):
+
+```bash
+sudo xentz-agent install --mode system --token <install-token> --server <control-plane-url> --include "/path/to/backup"
 ```
 
 - **Windows**: system mode installs a Windows Service.
 - **macOS**: system mode installs a LaunchDaemon.
 - **Linux**: system mode installs a systemd service + timer.
+
+### Important: keep mode and execution context aligned
+
+- If you enrolled in **user** mode, run commands **without** `sudo`.
+- If you enrolled in **system** mode, run interactive commands that need enrollment context **with** `sudo`.
+
+The CLI now detects common mismatches and prints actionable guidance, for example:
+- `backup: enrollment is system mode, but command is running in user mode ...`
+- `backup: enrollment is user mode, but command is running in system mode ...`
+
+Use diagnostics to confirm:
+
+```bash
+xentz-agent doctor --mode user --check-server
+sudo xentz-agent doctor --mode system --check-server
+```
 
 ## Localhost Status UI (Optional)
 

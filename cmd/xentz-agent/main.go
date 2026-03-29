@@ -272,6 +272,9 @@ func loadConfigAndPasswordForRestic(cfgFile string) (config.Config, string) {
 		log.Fatalf("load enrollment: %v", err)
 	}
 	localCfg.DeviceAPIKey = apiKey
+	if err := modeMismatchError("restore", localCfg); err != nil {
+		log.Fatal(err)
+	}
 
 	var cfg config.Config
 	if localCfg.DeviceAPIKey != "" && localCfg.ServerURL != "" {
@@ -425,6 +428,25 @@ func doctorCommand(mode, cfgFile string, checkServer bool) error {
 	defer resp.Body.Close()
 	fmt.Printf("Server check status: %d\n", resp.StatusCode)
 	return nil
+}
+
+func modeMismatchError(command string, cfg config.Config) error {
+	enrollmentMode := strings.ToLower(strings.TrimSpace(cfg.Mode))
+	if enrollmentMode == "" {
+		return nil
+	}
+	runtimeMode := strings.ToLower(string(paths.ResolveMode("")))
+	if enrollmentMode == runtimeMode {
+		return nil
+	}
+	switch {
+	case enrollmentMode == "system" && runtimeMode == "user":
+		return fmt.Errorf("%s: enrollment is system mode, but command is running in user mode. Re-run with sudo (or re-enroll with --mode user)", command)
+	case enrollmentMode == "user" && runtimeMode == "system":
+		return fmt.Errorf("%s: enrollment is user mode, but command is running in system mode (likely sudo). Re-run without sudo (or re-enroll with --mode system)", command)
+	default:
+		return fmt.Errorf("%s: enrollment mode is %q but runtime mode is %q", command, enrollmentMode, runtimeMode)
+	}
 }
 
 func replaceBinary(newPath string) error {
@@ -1002,6 +1024,9 @@ func main() {
 			log.Fatalf("load enrollment: %v", err)
 		}
 		localCfg.DeviceAPIKey = apiKey
+		if err := modeMismatchError("backup", localCfg); err != nil {
+			log.Fatal(err)
+		}
 
 		// Fetch config from server (with fallback to cached config)
 		var cfg config.Config
@@ -1302,6 +1327,9 @@ func main() {
 			log.Fatalf("load enrollment: %v", err)
 		}
 		localCfg.DeviceAPIKey = apiKey
+		if err := modeMismatchError("retention", localCfg); err != nil {
+			log.Fatal(err)
+		}
 
 		// Fetch config from server (with fallback to cached config)
 		var cfg config.Config
@@ -1471,6 +1499,9 @@ func main() {
 		configRevision := 0
 		if cfgFile != "" {
 			if cfg, err := config.Read(cfgFile); err == nil {
+				if mmErr := modeMismatchError("status", cfg); mmErr != nil {
+					fmt.Printf("Mode warning: %v\n", mmErr)
+				}
 				configRevision = cfg.ConfigRevision
 			}
 		}
@@ -1548,6 +1579,9 @@ func main() {
 			log.Fatalf("load enrollment: %v", err)
 		}
 		localCfg.DeviceAPIKey = apiKey
+		if err := modeMismatchError("config", localCfg); err != nil {
+			log.Fatal(err)
+		}
 		if localCfg.ServerURL == "" && localCfg.Restic.Repository == "" {
 			log.Fatalf("missing config and no enrollment identity available (run `xentz-agent install` or `xentz-agent recover`)")
 		}
