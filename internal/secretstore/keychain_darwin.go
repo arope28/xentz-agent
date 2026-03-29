@@ -19,12 +19,12 @@ func newStore() Store {
 
 func (s *keychainStore) Get(key string) ([]byte, error) {
 	cmd := exec.Command("security", "find-generic-password", "-s", keychainService, "-a", key, "-w")
-	out, err := cmd.Output()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		if isKeychainNotFound(err) {
+		if isKeychainNotFound(err, out) {
 			return nil, ErrNotFound
 		}
-		return nil, fmt.Errorf("keychain get: %w", err)
+		return nil, fmt.Errorf("keychain get: %w (output: %s)", err, strings.TrimSpace(string(out)))
 	}
 	return bytes.TrimSpace(out), nil
 }
@@ -40,7 +40,7 @@ func (s *keychainStore) Put(key string, value []byte) error {
 func (s *keychainStore) Delete(key string) error {
 	cmd := exec.Command("security", "delete-generic-password", "-s", keychainService, "-a", key)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		if isKeychainNotFound(err) {
+		if isKeychainNotFound(err, out) {
 			return ErrNotFound
 		}
 		return fmt.Errorf("keychain delete: %w (output: %s)", err, strings.TrimSpace(string(out)))
@@ -48,10 +48,14 @@ func (s *keychainStore) Delete(key string) error {
 	return nil
 }
 
-func isKeychainNotFound(err error) bool {
+func isKeychainNotFound(err error, output []byte) bool {
 	if err == nil {
 		return false
 	}
-	// security returns exit code 44 for item not found, but we only have stderr text
-	return strings.Contains(err.Error(), "could not be found") || strings.Contains(err.Error(), "SecKeychainSearchCopyNext")
+	// `security` uses exit code 44 for "item not found".
+	if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 44 {
+		return true
+	}
+	msg := strings.ToLower(err.Error() + " " + string(output))
+	return strings.Contains(msg, "could not be found") || strings.Contains(msg, "seckeychainsearchcopynext")
 }
