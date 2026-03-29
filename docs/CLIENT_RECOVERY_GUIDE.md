@@ -1,6 +1,7 @@
 # Client-facing backup recovery guide (v1)
 
 This guide is for end users and support staff. Operator detail: [RESTORE.md](RESTORE.md) (agent CLI). Recovery **tokens** (re-link enrollment): control plane `docs/RECOVERY.md`.
+Non-technical support handoff: [NON_TECHNICAL_RESTORE_PLAYBOOK.md](NON_TECHNICAL_RESTORE_PLAYBOOK.md).
 
 ## Two different “recovery” concepts
 
@@ -15,6 +16,9 @@ Do not confuse them: **restore** = data from restic repository; **recover** = re
 
 Requirements: `xentz-agent` installed, enrolled, `restic` on PATH, machine can reach backup repository.
 
+Fastest option for end users:
+`xentz-agent restore guided`
+
 1. List snapshots:  
    `xentz-agent restore snapshots`
 2. Restore a single file to a safe folder (example):  
@@ -22,6 +26,9 @@ Requirements: `xentz-agent` installed, enrolled, `restic` on PATH, machine can r
 3. Restore a folder or full snapshot:  
    `xentz-agent restore <snapshot_id> --target /path/to/empty-folder`  
    Optionally limit paths with `--path` (see [RESTORE.md](RESTORE.md)).
+
+For copy/paste-ready end-user scripts (latest file, folder to Desktop, alternate location restore), use:
+[NON_TECHNICAL_RESTORE_PLAYBOOK.md](NON_TECHNICAL_RESTORE_PLAYBOOK.md).
 
 **Security:** Restores use the same encrypted repository as backups. Do not share repository passwords or recovery tokens in chat or email; use a secure channel.
 

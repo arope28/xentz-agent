@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -80,6 +84,7 @@ Examples:
   xentz-agent backup
   xentz-agent backup --auto-init  # Auto-initialize repository if missing (use with caution)
   xentz-agent restore snapshots
+  xentz-agent restore guided
   xentz-agent restore find /path/to/file
   xentz-agent restore ls latest
   xentz-agent restore stats
@@ -115,7 +120,7 @@ Flags (backup):
 
 Flags (restore):
   --config       Config path override (default: <CONFIG_DIR>/config.json)
-  Subcommands:    snapshots | find <path> | ls <snapshot_id> [path] | stats [snapshot_id] | check |
+  Subcommands:    guided | snapshots | find <path> | ls <snapshot_id> [path] | stats [snapshot_id] | check |
                   <snapshot_id> --target <dir> [--path <path>] | dump <snapshot_id> <path> [--output <file>]
 
 Flags (retention):
@@ -389,6 +394,42 @@ func doctorCommand(mode, cfgFile string, checkServer bool) error {
 		fmt.Printf("Secret store %s: error (%v)\n", keyName, err)
 	}
 
+	// Restore-readiness checks
+	if _, err := exec.LookPath("restic"); err != nil {
+		fmt.Println("Restore readiness: restic not found in PATH")
+	} else {
+		fmt.Println("Restore readiness: restic found in PATH")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Printf("Restore readiness: cannot resolve home directory (%v)\n", err)
+	} else {
+		restoreTestDir := filepath.Join(home, "Desktop", "xentz-restore-check")
+		if err := os.MkdirAll(restoreTestDir, 0o700); err != nil {
+			fmt.Printf("Restore readiness: destination not writable (%v)\n", err)
+		} else {
+			f, err := os.CreateTemp(restoreTestDir, ".write-test-*")
+			if err != nil {
+				fmt.Printf("Restore readiness: destination not writable (%v)\n", err)
+			} else {
+				_ = f.Close()
+				_ = os.Remove(f.Name())
+				fmt.Printf("Restore readiness: writable destination OK (%s)\n", restoreTestDir)
+			}
+		}
+	}
+	if runtime.GOOS == "darwin" {
+		likelyProtected := false
+		for _, inc := range cfg.Include {
+			if strings.Contains(inc, "/Documents") || strings.Contains(inc, "/Desktop") {
+				likelyProtected = true
+				break
+			}
+		}
+		if likelyProtected {
+			fmt.Println("macOS hint: include paths contain Documents/Desktop. If restore/backup shows 'operation not permitted', see docs/MACOS_FULL_DISK_ACCESS_CHECKLIST.md")
+		}
+	}
 	if !checkServer {
 		return nil
 	}
@@ -427,6 +468,255 @@ func doctorCommand(mode, cfgFile string, checkServer bool) error {
 	}
 	defer resp.Body.Close()
 	fmt.Printf("Server check status: %d\n", resp.StatusCode)
+	return nil
+}
+
+type restoreSnapshot struct {
+	ID      string `json:"id"`
+	ShortID string `json:"short_id"`
+	Time    string `json:"time"`
+}
+
+func promptLine(r *bufio.Reader, label string) (string, error) {
+	fmt.Print(label)
+	s, err := r.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	return strings.TrimSpace(s), nil
+}
+
+func promptYesNo(r *bufio.Reader, label string, def bool) (bool, error) {
+	suffix := " [y/N]: "
+	if def {
+		suffix = " [Y/n]: "
+	}
+	raw, err := promptLine(r, label+suffix)
+	if err != nil {
+		return false, err
+	}
+	if raw == "" {
+		return def, nil
+	}
+	v := strings.ToLower(strings.TrimSpace(raw))
+	return v == "y" || v == "yes", nil
+}
+
+func tailText(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[len(s)-max:]
+}
+
+func dirHasEntries(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	_, err = f.Readdirnames(1)
+	if errors.Is(err, io.EOF) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func getSnapshots(env []string) ([]restoreSnapshot, error) {
+	cmd := exec.CommandContext(context.Background(), "restic", "snapshots", "--json")
+	cmd.Env = env
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("list snapshots: %w (%s)", err, tailText(stderr.String(), 1024))
+	}
+	var snaps []restoreSnapshot
+	if err := json.Unmarshal(stdout.Bytes(), &snaps); err != nil {
+		return nil, fmt.Errorf("parse snapshots: %w", err)
+	}
+	return snaps, nil
+}
+
+func runGuidedRestore(env []string) error {
+	r := bufio.NewReader(os.Stdin)
+	fmt.Println("Guided restore")
+	fmt.Println("1) one file   2) one folder   3) full snapshot")
+	kind, err := promptLine(r, "Choose restore type [1-3]: ")
+	if err != nil {
+		return err
+	}
+	if kind != "1" && kind != "2" && kind != "3" {
+		return fmt.Errorf("invalid restore type")
+	}
+
+	snapChoice, err := promptLine(r, "Use latest snapshot? [Y/n]: ")
+	if err != nil {
+		return err
+	}
+	snapshotID := "latest"
+	if strings.EqualFold(snapChoice, "n") || strings.EqualFold(snapChoice, "no") {
+		snaps, err := getSnapshots(env)
+		if err != nil {
+			return err
+		}
+		if len(snaps) == 0 {
+			return fmt.Errorf("no snapshots found")
+		}
+		limit := len(snaps)
+		if limit > 10 {
+			limit = 10
+		}
+		fmt.Println("Recent snapshots:")
+		for i := 0; i < limit; i++ {
+			id := snaps[i].ID
+			if snaps[i].ShortID != "" {
+				id = snaps[i].ShortID
+			}
+			fmt.Printf("  %d) %s  %s\n", i+1, id, snaps[i].Time)
+		}
+		sel, err := promptLine(r, "Choose number (or paste snapshot ID): ")
+		if err != nil {
+			return err
+		}
+		if sel == "" {
+			return fmt.Errorf("snapshot selection required")
+		}
+		if n, parseErr := strconv.Atoi(strings.TrimSpace(sel)); parseErr == nil && n >= 1 && n <= limit {
+			snapshotID = snaps[n-1].ID
+		} else {
+			snapshotID = sel
+		}
+	}
+
+	home, _ := os.UserHomeDir()
+	defaultTarget := filepath.Join(home, "Desktop", "xentz-restore-"+time.Now().Format("20060102-150405"))
+	target := defaultTarget
+	pathInSnapshot := ""
+
+	switch kind {
+	case "1":
+		pathInSnapshot, err = promptLine(r, "Enter full original file path: ")
+		if err != nil {
+			return err
+		}
+		if pathInSnapshot == "" {
+			return fmt.Errorf("file path required")
+		}
+		customTarget, err := promptLine(r, "Output file path (blank for Desktop default): ")
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(customTarget) != "" {
+			target = customTarget
+		} else {
+			target = filepath.Join(defaultTarget, filepath.Base(pathInSnapshot))
+		}
+	case "2":
+		pathInSnapshot, err = promptLine(r, "Enter full original folder path: ")
+		if err != nil {
+			return err
+		}
+		if pathInSnapshot == "" {
+			return fmt.Errorf("folder path required")
+		}
+		customTarget, err := promptLine(r, "Target directory (blank for Desktop default): ")
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(customTarget) != "" {
+			target = customTarget
+		}
+	case "3":
+		customTarget, err := promptLine(r, "Target directory (blank for Desktop default): ")
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(customTarget) != "" {
+			target = customTarget
+		}
+	}
+
+	if target == "/" || target == "/System" || target == "/Library" || target == "/usr" {
+		return fmt.Errorf("refusing dangerous target directory: %s", target)
+	}
+
+	fmt.Println("\nSummary:")
+	fmt.Printf("  restore type: %s\n", map[string]string{"1": "one file", "2": "one folder", "3": "full snapshot"}[kind])
+	fmt.Printf("  snapshot:     %s\n", snapshotID)
+	if pathInSnapshot != "" {
+		fmt.Printf("  source path:  %s\n", pathInSnapshot)
+	}
+	fmt.Printf("  target:       %s\n", target)
+	ok, err := promptYesNo(r, "Run restore now?", true)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+
+	switch kind {
+	case "1":
+		if _, err := os.Stat(target); err == nil {
+			overwrite, promptErr := promptYesNo(r, "Output file already exists. Overwrite?", false)
+			if promptErr != nil {
+				return promptErr
+			}
+			if !overwrite {
+				return fmt.Errorf("restore cancelled (target file exists)")
+			}
+		}
+		_ = os.MkdirAll(filepath.Dir(target), 0o700)
+		cmd := exec.CommandContext(context.Background(), "restic", "dump", snapshotID, pathInSnapshot)
+		cmd.Env = env
+		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+		if err != nil {
+			return fmt.Errorf("open output file: %w", err)
+		}
+		defer f.Close()
+		cmd.Stdout = f
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("restore failed: %w (%s)", err, tailText(stderr.String(), 2048))
+		}
+	case "2", "3":
+		if st, err := os.Stat(target); err == nil && st.IsDir() {
+			hasEntries, dirErr := dirHasEntries(target)
+			if dirErr == nil && hasEntries {
+				overwrite, promptErr := promptYesNo(r, "Target directory is not empty. Continue anyway?", false)
+				if promptErr != nil {
+					return promptErr
+				}
+				if !overwrite {
+					return fmt.Errorf("restore cancelled (target directory not empty)")
+				}
+			}
+		}
+		_ = os.MkdirAll(target, 0o700)
+		args := []string{"restore", snapshotID, "--target", target}
+		if kind == "2" {
+			args = append(args, "--include", pathInSnapshot)
+		}
+		cmd := exec.CommandContext(context.Background(), "restic", args...)
+		cmd.Env = env
+		cmd.Stdout = os.Stdout
+		var stderr bytes.Buffer
+		cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("restore failed: %w (%s)", err, tailText(stderr.String(), 2048))
+		}
+	}
+
+	fmt.Printf("\nRestore complete. Files written under: %s\n", target)
+	if runtime.GOOS == "darwin" {
+		fmt.Printf("Tip: open \"%s\"\n", target)
+	}
 	return nil
 }
 
@@ -1194,9 +1484,14 @@ func main() {
 
 		args := rfs.Args()
 		if len(args) == 0 {
-			log.Fatalf("usage: xentz-agent restore snapshots | find <path> | ls <snapshot_id> [path] | stats [snapshot_id] | check | <snapshot_id> --target <dir> [--path <path>] | dump <snapshot_id> <path> [--output <file>]")
+			log.Fatalf("usage: xentz-agent restore guided | snapshots | find <path> | ls <snapshot_id> [path] | stats [snapshot_id] | check | <snapshot_id> --target <dir> [--path <path>] | dump <snapshot_id> <path> [--output <file>]")
 		}
 		switch args[0] {
+		case "guided":
+			if err := runGuidedRestore(env); err != nil {
+				log.Fatalf("guided restore failed: %v", err)
+			}
+			return
 		case "snapshots":
 			cmd := exec.CommandContext(context.Background(), "restic", "snapshots")
 			cmd.Env = env

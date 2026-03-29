@@ -2,9 +2,20 @@
 
 The agent can list snapshots, find files, browse backup contents, check repository integrity, and restore files using the same repository and password as backup—no need to set `RESTIC_*` env vars yourself.
 
+If you need a non-technical, support-handoff version with copy/paste flows, use:
+[NON_TECHNICAL_RESTORE_PLAYBOOK.md](NON_TECHNICAL_RESTORE_PLAYBOOK.md).
+
 ## Using the agent (recommended)
 
 Ensure **restic** is installed and on your PATH (same as for backup).
+
+### Guided restore (recommended for most users)
+
+```bash
+xentz-agent restore guided
+```
+
+This interactive flow walks through restore type, snapshot selection, source path, and safe destination defaults (Desktop restore folder). Use this first when helping non-technical users.
 
 ### List snapshots
 
@@ -90,7 +101,7 @@ xentz-agent restore --config /path/to/config.json snapshots
 1. Create or change a file under one of your backup include paths.
 2. Run a backup: `xentz-agent backup --auto-init` (or wait for the scheduled run).
 3. Change or delete the file.
-4. List snapshots: `xentz-agent restore snapshots ls`.
+4. List snapshots: `xentz-agent restore snapshots`.
 5. Restore the file from the snapshot you took in step 2 (e.g. `restore dump <id> /path/to/file --output ./restored`).
 6. Confirm the restored content matches the version from before step 3.
 

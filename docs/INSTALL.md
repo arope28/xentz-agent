@@ -251,6 +251,29 @@ xentz-agent doctor --mode user --check-server
    - **System mode** config: `/Library/Application Support/XentzAgent/config/config.json`
    - Using `sudo` with `--mode system` writes/reads the system path.
 
+### Restore quick paths (user support)
+
+For the easiest restore path, use guided mode:
+
+```bash
+xentz-agent restore guided
+```
+
+If you need direct commands:
+
+```bash
+# List restore points
+xentz-agent restore snapshots
+
+# Restore one file to a safe output path
+xentz-agent restore dump latest /full/original/path/to/file --output "$HOME/Desktop/xentz-restore-file"
+
+# Restore one folder into a safe destination
+xentz-agent restore latest --target "$HOME/Desktop/xentz-restore" --path /full/original/path/to/folder
+```
+
+See `docs/RESTORE.md` for full operator details and `docs/NON_TECHNICAL_RESTORE_PLAYBOOK.md` for copy/paste support scripts.
+
 ### Server-Driven Configuration
 
 Once enrolled, the agent automatically:
@@ -317,7 +340,7 @@ sudo xentz-agent doctor --mode system --check-server
 
 ## Localhost Status UI (Optional)
 
-Run a localhost-only status UI (read-only by default):
+Run a localhost-only status UI. Status/config endpoints are read-only; restore endpoints can write files only when explicitly called with a valid local token:
 
 ```bash
 xentz-agent local-ui --addr 127.0.0.1:9800
@@ -328,3 +351,50 @@ While this command runs, enrolled agents also **poll the control plane** for con
 Then open **http://127.0.0.1:9800/** in your browser. The root page shows links to `/status`, `/runs`, `/config`, and `/diagnostics` that work in the browser.
 
 For API access (e.g. curl), use the token from `<CONFIG_DIR>/local-ui.token` in the `X-Local-Token` header, or as `?token=YOUR_TOKEN` in the URL.
+
+### Open Restore Wizard in one click (macOS/Linux)
+
+Use the launcher script:
+
+```bash
+scripts/open-restore-wizard.sh
+```
+
+It will:
+- start a fresh `local-ui` instance on `127.0.0.1:9800`
+- read `local-ui.token`
+- open `/restore` in your browser with the token
+- reuse an already-running `local-ui` on the same `--addr` only if it passes identity + token checks; otherwise it refuses launch
+- prefer `./xentz-agent` in the current directory when present (otherwise uses `xentz-agent` from PATH)
+
+Optional flags:
+
+```bash
+scripts/open-restore-wizard.sh --mode user
+scripts/open-restore-wizard.sh --mode system
+scripts/open-restore-wizard.sh --addr 127.0.0.1:9800
+```
+
+Notes:
+- For security, `--addr` is loopback-only (`127.0.0.1`, `localhost`, or `::1`).
+- `--mode system` should be run in system context (for example: `sudo scripts/open-restore-wizard.sh --mode system`).
+
+On macOS, you can also double-click:
+
+```bash
+scripts/open-restore-wizard.command
+```
+
+On Windows (PowerShell):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\open-restore-wizard.ps1
+```
+
+Optional flags:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\open-restore-wizard.ps1 -Mode user
+powershell -ExecutionPolicy Bypass -File .\scripts\open-restore-wizard.ps1 -Mode system
+powershell -ExecutionPolicy Bypass -File .\scripts\open-restore-wizard.ps1 -Addr 127.0.0.1:9800
+```
