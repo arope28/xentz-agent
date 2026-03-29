@@ -208,6 +208,16 @@ xentz-agent install --token <install-token> \
   --include "/Users/yourname/Pictures"
 ```
 
+If the device is already enrolled and you want to replace local enrollment with a new token, use:
+
+```bash
+xentz-agent install --token <new-install-token> \
+  --server https://control-plane.example.com \
+  --mode user \
+  --force \
+  --include "/Users/yourname/Documents"
+```
+
 **`--server` URL:** Pass the control plane **public origin** only (scheme, host, and port if needed)—for example `https://control.example.com` or `http://local.xentz.test:8080` in front of nginx. The agent appends `/control/v1/...` itself; do **not** add a `/control` suffix to `--server`.
 
 The agent will:
@@ -215,6 +225,28 @@ The agent will:
 2. Receive server-assigned identifiers (tenant_id, device_id, device_api_key)
 3. Store the device_api_key for future authentication (secret store when available)
 4. Set up scheduled backups
+
+### Moved Servers / New Token / Still 401?
+
+If you see authentication failures like `invalid or revoked device API key` after reinstalling:
+
+1. Run diagnostics:
+
+```bash
+xentz-agent doctor --mode user --check-server
+```
+
+2. Key precedence is **secret store first, config second**:
+   - If a key exists in platform secret storage (macOS Keychain, Windows DPAPI, Linux libsecret/file fallback), that key is used.
+   - `config.json` `device_api_key` is only a fallback and may be ignored.
+
+3. Re-enroll explicitly when needed:
+   - Use `xentz-agent install --token ... --server ... --force` to clear local identity + stored API key and enroll again.
+
+4. Verify mode-specific paths (macOS):
+   - **User mode** config: `~/Library/Application Support/XentzAgent/config/config.json`
+   - **System mode** config: `/Library/Application Support/XentzAgent/config/config.json`
+   - Using `sudo` with `--mode system` writes/reads the system path.
 
 ### Server-Driven Configuration
 

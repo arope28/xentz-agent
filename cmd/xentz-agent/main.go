@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +28,7 @@ import (
 	"xentz-agent/internal/secretstore"
 	windowsservice "xentz-agent/internal/service/windows"
 	"xentz-agent/internal/state"
+	"xentz-agent/internal/validation"
 )
 
 // formatBytes returns a human-readable size (e.g. "1.5 KB", "23 MB"). Uses 1024 base.
@@ -53,6 +55,7 @@ func usage() {
 
 Commands:
   install     Install config + scheduled task (macOS: launchd, Windows: Task Scheduler/Service, Linux: systemd/cron)
+  doctor      Print enrollment/secret diagnostics and optional server auth check
   recover     Recover enrollment after config loss (portal recovery token)
   uninstall   Remove service/scheduler and optionally purge config/state
   upgrade     Replace binary and restart service/scheduler
@@ -126,6 +129,7 @@ Flags (install):
   --server        Control plane base URL (required with --token)
   --daily-at      Time in HH:MM (24h), default 02:00
   --mode          Install mode: user or system (default: user)
+  --force         Replace existing enrollment (clears stored API key + local identity before enroll)
   --repo          Restic repository URL (legacy mode, use --token instead)
   --password      Restic repository password (optional if server provides via enrollment)
   --password-file Path to restic password file (optional, default: <CONFIG_DIR>/restic.pw)
@@ -160,6 +164,11 @@ Flags (config):
   --list-excludes            List current exclude patterns
   --list-all                 List both include paths and exclude patterns
   --config                   Config path override (default: <CONFIG_DIR>/config.json)
+
+Flags (doctor):
+  --mode          Inspect mode: user or system (default: user)
+  --config        Config path override (default: <CONFIG_DIR>/config.json)
+  --check-server  Attempt GET /control/v1/config and print HTTP status
 
 Note: With token-based enrollment, configuration (including retention policy) is fetched from the server on each run.
       In legacy mode, retention policy must be configured in config.json before running 'retention' command.
@@ -241,7 +250,11 @@ func loadEnrollment(cfgFile, mode string) (config.Config, string, error) {
 		}
 	}
 
-	apiKey, err := config.GetDeviceAPIKey(cfg)
+	effectiveMode := strings.TrimSpace(mode)
+	if effectiveMode == "" {
+		effectiveMode = strings.TrimSpace(cfg.Mode)
+	}
+	apiKey, err := config.GetDeviceAPIKeyForMode(cfg, effectiveMode)
 	if err != nil {
 		if errors.Is(err, secretstore.ErrNotFound) {
 			return cfg, "", nil
@@ -294,6 +307,124 @@ func loadConfigAndPasswordForRestic(cfgFile string) (config.Config, string) {
 		resticPassword = pw
 	}
 	return cfg, resticPassword
+}
+
+func resetEnrollment(mode, cfgFile string) error {
+	effectiveMode := strings.TrimSpace(mode)
+	if effectiveMode == "" {
+		effectiveMode = string(paths.ResolveMode(""))
+	}
+	cfgDir, err := paths.ConfigDir(effectiveMode)
+	if err != nil {
+		return fmt.Errorf("resolve config dir: %w", err)
+	}
+	var errs []string
+	if err := os.Remove(cfgFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+		errs = append(errs, fmt.Sprintf("remove config: %v", err))
+	}
+	if err := os.Remove(filepath.Join(cfgDir, "user_id")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		errs = append(errs, fmt.Sprintf("remove user_id: %v", err))
+	}
+	if err := identity.Delete(effectiveMode); err != nil {
+		errs = append(errs, fmt.Sprintf("remove identity: %v", err))
+	}
+	if err := config.DeleteDeviceAPIKeysForMode(effectiveMode); err != nil {
+		errs = append(errs, fmt.Sprintf("remove device api key: %v", err))
+	}
+	if len(errs) > 0 {
+		return errors.New(strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func doctorCommand(mode, cfgFile string, checkServer bool) error {
+	effectiveMode := strings.TrimSpace(mode)
+	if effectiveMode == "" {
+		effectiveMode = string(paths.ResolveMode(""))
+	}
+	cfgDir, err := paths.ConfigDir(effectiveMode)
+	if err != nil {
+		return fmt.Errorf("resolve config dir: %w", err)
+	}
+	stateDir, err := paths.StateDir(effectiveMode)
+	if err != nil {
+		return fmt.Errorf("resolve state dir: %w", err)
+	}
+	logDir, err := paths.LogDir(effectiveMode)
+	if err != nil {
+		return fmt.Errorf("resolve log dir: %w", err)
+	}
+	fmt.Printf("Mode:        %s\n", effectiveMode)
+	fmt.Printf("Config file: %s\n", cfgFile)
+	fmt.Printf("Config dir:  %s\n", cfgDir)
+	fmt.Printf("State dir:   %s\n", stateDir)
+	fmt.Printf("Logs dir:    %s\n", logDir)
+	fmt.Printf("Identity:    %s\n", filepath.Join(stateDir, "identity.json"))
+
+	cfg, err := config.Read(cfgFile)
+	if err != nil {
+		fmt.Printf("Config read: missing/unreadable (%v)\n", err)
+	} else {
+		fmt.Printf("Enrolled in config: %v\n", enroll.IsEnrolled(cfg.TenantID, cfg.DeviceID))
+		fmt.Printf("Tenant ID:   %s\n", strings.TrimSpace(cfg.TenantID))
+		fmt.Printf("Device ID:   %s\n", strings.TrimSpace(cfg.DeviceID))
+		fmt.Printf("Server URL:  %s\n", strings.TrimSpace(cfg.ServerURL))
+		if strings.TrimSpace(cfg.DeviceAPIKey) != "" {
+			fmt.Printf("Config has device_api_key field: yes (legacy/fallback)\n")
+		} else {
+			fmt.Printf("Config has device_api_key field: no\n")
+		}
+	}
+
+	keyName := "device_api_key (" + strings.ToLower(strings.TrimSpace(effectiveMode)) + ")"
+	apiKey, err := config.GetDeviceAPIKeyForModeReadOnly(config.Config{Mode: effectiveMode}, effectiveMode)
+	if err == nil {
+		fmt.Printf("Secret store %s: present (len=%d)\n", keyName, len(strings.TrimSpace(string(apiKey))))
+	} else if errors.Is(err, secretstore.ErrNotFound) {
+		fmt.Printf("Secret store %s: missing\n", keyName)
+	} else {
+		fmt.Printf("Secret store %s: error (%v)\n", keyName, err)
+	}
+
+	if !checkServer {
+		return nil
+	}
+	serverURL := strings.TrimSpace(cfg.ServerURL)
+	if serverURL == "" {
+		if id, idErr := identity.Load(effectiveMode); idErr == nil {
+			serverURL = strings.TrimSpace(id.ServerURL)
+		}
+	}
+	if serverURL == "" {
+		fmt.Println("Server check: skipped (server_url missing in config and identity)")
+		return nil
+	}
+	if err := validation.ValidateServerURL(serverURL); err != nil {
+		fmt.Printf("Server check: skipped (invalid server_url: %v)\n", err)
+		return nil
+	}
+	key := strings.TrimSpace(apiKey)
+	if key == "" {
+		key = strings.TrimSpace(cfg.DeviceAPIKey)
+	}
+	if key == "" {
+		fmt.Println("Server check: skipped (no device API key in secretstore/config)")
+		return nil
+	}
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(serverURL, "/")+"/control/v1/config", nil)
+	if err != nil {
+		return fmt.Errorf("build server check request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("Server check: request error (%v)\n", err)
+		return nil
+	}
+	defer resp.Body.Close()
+	fmt.Printf("Server check status: %d\n", resp.StatusCode)
+	return nil
 }
 
 func replaceBinary(newPath string) error {
@@ -371,6 +502,7 @@ func main() {
 		server := fs.String("server", "", "Control plane base URL (required for token-based enrollment)")
 		dailyAt := fs.String("daily-at", "02:00", "Daily time HH:MM (24h)")
 		mode := fs.String("mode", "user", "Install mode: user or system")
+		force := fs.Bool("force", false, "Replace existing enrollment (clear stored API key + local identity before enroll)")
 		configPath := fs.String("config", "", "Config path override")
 		token := fs.String("token", "", "Install token for enrollment (primary method)")
 		repo := fs.String("repo", "", "Restic repository URL (legacy mode, use --token instead)")
@@ -398,7 +530,7 @@ func main() {
 		}
 
 		// Determine user ID
-		configDir, err := paths.ConfigDir("")
+		configDir, err := paths.ConfigDir(*mode)
 		if err != nil {
 			log.Fatalf("resolve config dir: %v", err)
 		}
@@ -419,10 +551,19 @@ func main() {
 			if *server == "" {
 				log.Fatal("--server is required when using --token")
 			}
+			if *force {
+				log.Println("⚠ --force specified: clearing stored enrollment identity and API key before re-enrolling.")
+				if err := resetEnrollment(*mode, cfgFile); err != nil {
+					log.Fatalf("force reset failed: %v", err)
+				}
+				cfg = config.Config{}
+				cfg.UserID = userID
+			}
 
 			// Check if already enrolled
 			if enroll.IsEnrolled(cfg.TenantID, cfg.DeviceID) {
-				log.Println("Device is already enrolled. Using existing configuration.")
+				log.Println("Device is already enrolled; install token will NOT be used.")
+				log.Println("Use --force to replace enrollment with a new token.")
 				log.Printf("  Tenant ID: %s", cfg.TenantID)
 				log.Printf("  Device ID: %s", cfg.DeviceID)
 
@@ -452,7 +593,7 @@ func main() {
 				// Store enrollment data (do not store InstallToken after enrollment)
 				cfg.TenantID = enrollmentResult.TenantID
 				cfg.DeviceID = enrollmentResult.DeviceID
-				if err := config.StoreDeviceAPIKey(enrollmentResult.DeviceAPIKey); err != nil {
+				if err := config.StoreDeviceAPIKeyForMode(enrollmentResult.DeviceAPIKey, *mode); err != nil {
 					log.Fatalf("store device api key: %v", err)
 				}
 				cfg.DeviceAPIKey = ""
@@ -570,6 +711,23 @@ func main() {
 		log.Println("install complete ✅")
 		return
 
+	case "doctor":
+		fs := flag.NewFlagSet(cmd, flag.ExitOnError)
+		mode := fs.String("mode", "user", "Inspect mode: user or system")
+		configPath := fs.String("config", "", "Config path override")
+		checkServer := fs.Bool("check-server", false, "Attempt GET /control/v1/config and print HTTP status")
+		if err := fs.Parse(os.Args[2:]); err != nil {
+			log.Fatalf("parse flags: %v", err)
+		}
+		cfgFile, err = resolveConfigPathWithMode(*configPath, *mode)
+		if err != nil {
+			log.Fatalf("resolve config path: %v", err)
+		}
+		if err := doctorCommand(*mode, cfgFile, *checkServer); err != nil {
+			log.Fatalf("doctor failed: %v", err)
+		}
+		return
+
 	case "recover":
 		fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 		server := fs.String("server", "", "Control plane base URL (required)")
@@ -615,7 +773,7 @@ func main() {
 			log.Fatalf("recover failed: %v", err)
 		}
 
-		if err := config.StoreDeviceAPIKey(res.DeviceAPIKey); err != nil {
+		if err := config.StoreDeviceAPIKeyForMode(res.DeviceAPIKey, *mode); err != nil {
 			log.Fatalf("store device api key: %v", err)
 		}
 		if err := config.StoreResticPassword(res.Password); err != nil {
@@ -699,7 +857,7 @@ func main() {
 			}
 			// Also purge durable identity + secrets (factory reset).
 			_ = identity.Delete(*mode)
-			_ = secretstore.Delete(secretstore.KeyDeviceAPIKey)
+			_ = config.DeleteDeviceAPIKeysForMode(*mode)
 			_ = secretstore.Delete(secretstore.KeyResticPassword)
 		}
 
