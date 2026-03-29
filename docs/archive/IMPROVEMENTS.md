@@ -168,4 +168,3 @@ err := validation.ValidateServerURLStrict("https://control.example.com") // ✅ 
 - Current implementation is secure for MVP use cases
 - Prioritize based on deployment environment and threat model
 - Consider user feedback before implementing breaking changes
-

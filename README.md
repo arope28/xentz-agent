@@ -253,12 +253,11 @@ The agent ships structured logs to `POST /admin/v1/logs` for centralized analysi
 ## Documentation
 
 See the `docs/` directory for detailed documentation:
-- `ARCHITECTURE.md` - System architecture overview
-- `FLOW.md` - Detailed operation flows
 - `INSTALL.md` - Installation instructions
 - `PLATFORMS.md` - Platform-specific details
-- `SECURITY_REVIEW.md` - Security considerations
 - `PHASE0_SMOKE_CHECKLIST.md` - Pre-production enroll/backup/kill-switch smoke steps
 - `CLIENT_ONBOARDING_SOP.md` - Client onboarding standard procedure
 - `CLIENT_RECOVERY_GUIDE.md` - Client-safe restore and recovery-token guidance
 - `REQUIREMENTS.md` - V1 sell-ready checklist
+
+Archived planning/history docs live in `docs/archive/` (including old architecture/flow/security snapshots).
