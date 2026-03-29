@@ -194,6 +194,9 @@ Add an exclude so the agent doesn’t try to read that path. In your server-driv
 
 Then run a backup again (or wait for the next scheduled run). The agent already passes `exclude` through to restic.
 
+For a mode-aware, step-by-step support runbook, see:
+`docs/MACOS_FULL_DISK_ACCESS_CHECKLIST.md`
+
 ## Configuration
 
 ### Token-Based Enrollment (Recommended)
