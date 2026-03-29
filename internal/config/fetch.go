@@ -16,6 +16,50 @@ import (
 	"xentz-agent/internal/validation"
 )
 
+// validateConfigResponseFromServer checks kill-switch, identity, required fields,
+// and include/exclude path safety after decoding any /control/v1/config JSON response.
+func validateConfigResponseFromServer(cfg Config) error {
+	// KILL-SWITCH: disabled status must take precedence over other checks.
+	if cfg.Enabled != nil && !*cfg.Enabled {
+		return fmt.Errorf("device is disabled by server (kill-switch activated)")
+	}
+	if strings.TrimSpace(cfg.TenantID) == "" || strings.TrimSpace(cfg.DeviceID) == "" {
+		return fmt.Errorf("server config missing required identity fields (tenant_id/device_id)")
+	}
+	if len(cfg.Include) == 0 {
+		return fmt.Errorf("server config missing required field: include")
+	}
+	if cfg.Restic.Repository == "" {
+		return fmt.Errorf("server config missing required field: restic.repository")
+	}
+	if len(cfg.Include) > 1000 {
+		return fmt.Errorf("too many include paths (max 1000)")
+	}
+	if len(cfg.Exclude) > 1000 {
+		return fmt.Errorf("too many exclude paths (max 1000)")
+	}
+	validatePath := func(path string) error {
+		if len(path) == 0 || len(path) > 4096 {
+			return fmt.Errorf("path length invalid")
+		}
+		if strings.Contains(path, "\x00") {
+			return fmt.Errorf("path contains null byte")
+		}
+		return nil
+	}
+	for i, path := range cfg.Include {
+		if err := validatePath(path); err != nil {
+			return fmt.Errorf("invalid include path at index %d: %w", i, err)
+		}
+	}
+	for i, path := range cfg.Exclude {
+		if err := validatePath(path); err != nil {
+			return fmt.Errorf("invalid exclude path at index %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
 // FetchFromServer fetches configuration from the server using the device API key
 func FetchFromServer(serverURL, deviceAPIKey string) (Config, error) {
 	if serverURL == "" {
@@ -77,53 +121,8 @@ func FetchFromServer(serverURL, deviceAPIKey string) (Config, error) {
 		return Config{}, fmt.Errorf("decode config response: %w", err)
 	}
 
-	// KILL-SWITCH: Check if device is disabled (enabled=false)
-	// This must be checked BEFORE any other validation to ensure disabled status takes precedence
-	if cfg.Enabled != nil && !*cfg.Enabled {
-		return Config{}, fmt.Errorf("device is disabled by server (kill-switch activated)")
-	}
-
-	// Ensure identity fields are present for scoping
-	if strings.TrimSpace(cfg.TenantID) == "" || strings.TrimSpace(cfg.DeviceID) == "" {
-		return Config{}, fmt.Errorf("server config missing required identity fields (tenant_id/device_id)")
-	}
-
-	// Validate required fields
-	if len(cfg.Include) == 0 {
-		return Config{}, fmt.Errorf("server config missing required field: include")
-	}
-	if cfg.Restic.Repository == "" {
-		return Config{}, fmt.Errorf("server config missing required field: restic.repository")
-	}
-
-	// Validate config values to prevent malicious input
-	if len(cfg.Include) > 1000 {
-		return Config{}, fmt.Errorf("too many include paths (max 1000)")
-	}
-	if len(cfg.Exclude) > 1000 {
-		return Config{}, fmt.Errorf("too many exclude paths (max 1000)")
-	}
-
-	// Validate paths
-	validatePath := func(path string) error {
-		if len(path) == 0 || len(path) > 4096 {
-			return fmt.Errorf("path length invalid")
-		}
-		if strings.Contains(path, "\x00") {
-			return fmt.Errorf("path contains null byte")
-		}
-		return nil
-	}
-
-	for i, path := range cfg.Include {
-		if err := validatePath(path); err != nil {
-			return Config{}, fmt.Errorf("invalid include path at index %d: %w", i, err)
-		}
-	}
-	for i, path := range cfg.Exclude {
-		if err := validatePath(path); err != nil {
-			return Config{}, fmt.Errorf("invalid exclude path at index %d: %w", i, err)
-		}
+	if err := validateConfigResponseFromServer(cfg); err != nil {
+		return Config{}, err
 	}
 
 	return cfg, nil
@@ -321,17 +320,8 @@ func UpdateConfigOnServer(serverURL, deviceAPIKey string, include, exclude []str
 		return Config{}, fmt.Errorf("decode config response: %w", err)
 	}
 
-	// KILL-SWITCH: Check if device is disabled (enabled=false)
-	if cfg.Enabled != nil && !*cfg.Enabled {
-		return Config{}, fmt.Errorf("device is disabled by server (kill-switch activated)")
-	}
-
-	// Validate required fields
-	if len(cfg.Include) == 0 {
-		return Config{}, fmt.Errorf("server config missing required field: include")
-	}
-	if cfg.Restic.Repository == "" {
-		return Config{}, fmt.Errorf("server config missing required field: restic.repository")
+	if err := validateConfigResponseFromServer(cfg); err != nil {
+		return Config{}, err
 	}
 
 	return cfg, nil
