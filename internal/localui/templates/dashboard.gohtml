@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>xentz-agent — Backup Dashboard</title>
+<style>
+*,*::before,*::after{box-sizing:border-box}
+:root{--bg:#f8fafc;--card:#fff;--text:#0f172a;--muted:#64748b;--line:#e2e8f0;--ok:#16a34a;--warn:#d97706;--err:#dc2626;--blue:#2563eb;--blue-bg:#eff6ff}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:28px 20px;line-height:1.5;max-width:980px;margin-left:auto;margin-right:auto}
+h1{font-size:22px;margin:0 0 6px;font-weight:700}
+nav ul,.page-nav{display:flex;gap:8px;padding:0 0 20px;list-style:none;border-bottom:1px solid var(--line);margin-top:14px}
+.page-nav a{text-decoration:none;color:var(--blue);padding:6px 13px;border-radius:8px;font-size:14px;font-weight:500;background:#f1f8ff;border:1px solid #dbeafe;transition:background .15s}
+.page-nav a:hover{background:#dbeafe}.page-nav a.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+.grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:13px;margin:18px 0}
+.card{border-radius:12px;background:var(--card);border:1px solid var(--line);padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.card h3{margin:0 0 5px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:600}
+.val{font-size:18px;font-weight:700;line-height:1.4;margin-bottom:2px}
+.hint{font-size:12px;color:var(--muted)}
+.chip{display:inline-block;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:600;border:1px solid var(--line);color:var(--muted)}
+.chip.ok{background:#f0fdf4;color:var(--ok);border-color:#bbf7d0}
+.chip.warn{background:#fffbeb;color:var(--warn);border-color:#fde68a}
+.chip.err{background:#fef2f2;color:var(--err);border-color:#fecaca}
+.section-title{font-size:15px;font-weight:600;margin:24px 0 10px;display:flex;align-items:center;gap:8px;color:#334155}
+.section-title::before{content:'';width:3px;height:18px;background:var(--blue);border-radius:2px;display:inline-block}
+.include-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.path-chip{background:#f1f5f9;border-radius:8px;padding:4px 10px;font-size:13px;font-family:monospace;color:#334155}
+.actions-row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+button,.btn-primary button,.btn-muted button{cursor:pointer;border-radius:9px;padding:7px 16px;font-size:13px;font-family:inherit}
+.btn-primary button,.primary{background:var(--blue);color:#fff;border-color:var(--blue)}
+.btn-primary button:hover,.primary:hover{background:#1d4ed8}
+.btn-muted {background:#fff;border-color:var(--line)}
+.btn-muted button:hover{border-color:#bfdbfe;background:#f0f7ff}
+footer.notes{margin-top:28px;font-size:12px;color:var(--muted)}#diag-toast{display:none;position:fixed;bottom:24px;right:24px;background:#1e293b;color:#fff;padding:12px 18px;border-radius:10px;font-size:13px;z-index:10}
+@media(max-width:700px){.grid4{grid-template-columns:1fr 1fr}.page-nav a{padding:5px 10px;font-size:12px}}
+</style>
+</head>
+<body>
+
+<h1>xentz-agent Backup Dashboard</h1>
+<nav class="page-nav"><a href="#dashboard">Dashboard</a><a href="/restore?token={{.Token}}">Restore Wizard</a></nav>
+
+<div id="pg-dashboard">
+  <div class="grid4">
+    <div class="card"><h3>Status</h3><div class="val" id="st-badge"></div><p class="hint" id="st-detail"></p></div>
+    <div class="card"><h3>Last Backup</h3><div class="val" id="last-bk-time">—</div><p class="hint" id="last-bk-detail"></p></div>
+    <div class="card"><h3>Last Retention</h3><div class="val" id="last-ret-time">—</div><p class="hint" id="last-ret-detail"></p></div>
+    <div class="card"><h3>Kill Switch</h3><div class="val" id="ks-badge"></div><p class="hint" id="ks-detail"></p></div>
+  </div>
+
+  <div id="config-summary-card" style="display:none">
+    <h3>Backup Scope</h3>
+    <div class="section-title">Include Paths</div>
+    <div class="include-list" id="include-list"></div>
+    <div class="section-title" style="margin-top:14px">Schedule & Retention</div>
+    <p class="hint" id="sched-detail"></p>
+  </div>
+
+  <actions-row class="actions-row">
+    <button class="btn-primary primary"><span>&#x1f504; Save Config</span></button>
+    <button class="btn-muted primary"><span>&#x2713; Pause/Resume Backups</span></button>
+  </div>
+</div>
+
+<footer class="notes">Token stored at <code>{{.TokenPath}}</code><br>
+This page is served by the xentz-agent local UI.</footer>
+<div id="diag-toast"></div>
+
+<script>const T={{.RawToken}};async function f(p){try{const r=await fetch('/status?token='+encodeURIComponent(T));return r.ok?r.json():null}catch(e){return null}}
+function badge(id,k,h){document.getElementById(id).innerHTML='<span class="chip'+(k?' '+k:'')+'">'+h+'</span>'}
+async function load(){try{const d=await f();if(!d)return;badge('st-badge','ok','Healthy');
+badge('last-bk-time','',d.last_backup?new Date(d.last_backup.time_utc).toLocaleString():'Never');
+badge('last-ret-time','',d.last_retention?new Date(d.last_retention.time_utc||d.last_retention).toLocaleString():'Never');
+badge('ks-badge',d.revoked?'warn':'ok', d.revoked?'Disabled':'Enabled')}catch(e){badge('st-badge','err',e.message)}}load();</script>
+</body>
+</html>

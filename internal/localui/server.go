@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"io"
 	"net/http"
 	"net/url"
@@ -28,6 +30,27 @@ import (
 )
 
 const tokenFileName = "local-ui.token"
+
+//go:embed templates/dashboard.gohtml
+var dashboardHTML embed.FS
+
+var (
+dashboardTemplate *template.Template
+)
+
+func init() {
+	dashBytes, err := dashboardHTML.ReadFile("templates/dashboard.gohtml")
+	if err != nil {
+		panic(fmt.Sprintf("failed to read dashboard template: %v", err))
+	}
+	dashboardTemplate = template.Must(template.New("dashboard").Parse(string(dashBytes)))
+}
+
+type DashboardData struct {
+	Token     string
+	RawToken  string
+	TokenPath string
+}
 
 type Server struct {
 	addr  string
@@ -81,38 +104,25 @@ func (s *Server) serve(cfgPath string) error {
 	return http.ListenAndServe(s.addr, mux)
 }
 
-// handleRoot returns a simple HTML page with usage and working links (token in query for browser).
+// handleRoot renders the polished dashboard using html/template (no fmt.Sprintf hacks).
 func (s *Server) handleRoot() http.HandlerFunc {
 	cfgDir, _ := paths.ConfigDir("")
 	tokenPath := filepath.Join(cfgDir, tokenFileName)
-	// Token in query so links work in browser (server binds to localhost by default).
 	tok := url.QueryEscape(s.token)
-	html := fmt.Sprintf(`<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><title>xentz-agent Local UI</title></head>
-<body>
-  <h1>xentz-agent Local UI</h1>
-  <p>Token file: <code>%s</code></p>
-  <ul>
-    <li><a href="/status?token=%s">/status</a> – last backup and retention</li>
-    <li><a href="/runs?token=%s">/runs</a> – run history</li>
-    <li><a href="/config?token=%s">/config</a> – config (secrets redacted)</li>
-    <li><a href="/diagnostics?token=%s">/diagnostics</a> – create diagnostics bundle</li>
-    <li><a href="/restore?token=%s">/restore</a> – guided browser restore wizard</li>
-    <li><a href="/restore/snapshots?token=%s">/restore/snapshots</a> – list restore points</li>
-  </ul>
-  <p>Restore preview endpoint: <code>POST /restore/plan</code></p>
-  <p>Restore execution endpoint: <code>POST /restore/run</code></p>
-  <p>Example: <code>curl -H "X-Local-Token: $(cat %s)" http://127.0.0.1:9800/status</code></p>
-</body>
-</html>`, tokenPath, tok, tok, tok, tok, tok, tok, tokenPath)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(html))
+		data := DashboardData{
+			Token:     tok,
+			RawToken:  s.token, // for JS (not escaped)
+			TokenPath: tokenPath,
+		}
+		if err := dashboardTemplate.Execute(w, data); err != nil {
+			http.Error(w, "template error", http.StatusInternalServerError)
+		}
 	}
 }
 
