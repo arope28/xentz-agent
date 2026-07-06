@@ -235,6 +235,9 @@ Example (system mode on Linux):
 
 - Device API key and restic password are stored in OS-native secret stores when available.
 - Linux falls back to a file-based secret store under `<CONFIG_DIR>/secrets` with `0600` permissions.
+- `XENTZ_AGENT_SECRETSTORE=file` forces the file-based store on any platform. This exists for drills/CI
+  that need `HOME`-scoped isolation (the macOS Keychain is shared per OS user, so parallel test
+  enrollments would clobber each other). Production installs should not set it.
 
 ## API Integration
 

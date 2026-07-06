@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Status — Xentz Backup</title>
+<style>
+body{background:#f8fafc;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:36px 20px;max-width:960px;line-height:1.5}
+h1{font-size:20px;margin-bottom:4px}
+nav ul,.page-nav{display:flex;gap:8px;padding:0 0 18px;border-bottom:1px solid #e2e8f0;margin-top:14px}
+a.btn{text-decoration:none;padding:6px 13px;background:#f1e4ff;color:#573891;font-weight:500;border-radius:9px;font-size:14px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-top:18px}
+.card{border:1px solid #e2e8f0;border-radius:12px;padding:16px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.card h3{margin:0 0 5px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#64748b;font-weight:600}
+.val{font-size:18px;font-weight:700;line-height:1.4;margin-bottom:2px}
+.hint{font-size:12px;color:#64748b}
+.chip{display:inline-block;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:600;border:1px solid #e2e8f0;color:#64748b}
+.chip.ok{background:#f0fdf4;color:#16a34a;border-color:#bbf7d0}
+.chip.warn{background:#fffbeb;color:#d97706;border-color:#fde68a}
+.chip.err{background:#fef2f2;color:#dc2626;border-color:#fecaca}
+footer.notes{margin-top:28px;font-size:12px;color:#64748b;border-top:1px solid #e2e8f0;padding-top:16px}
+</style>
+</head>
+<body>
+
+<nav class="page-nav">
+  <a class="btn" href="/">&larr; Dashboard</a>
+</nav>
+
+<h1>Status</h1>
+
+<div class="grid2">
+  <div class="card">
+    <h3>Last Backup</h3>
+    <div class="val">{{.LastBackup}}</div>
+    <div class="hint">{{.LastBackupAt}}</div>
+  </div>
+  <div class="card">
+    <h3>Last Retention Run</h3>
+    <div class="val">{{.LastRetention}}</div>
+    <div class="hint">{{.LastRetentionAt}}</div>
+  </div>
+  <div class="card">
+    <h3>Agent Status</h3>
+    <div class="val"><span class="chip {{if .Revoked}}warn{{else}}ok{{end}}">{{if .Revoked}}● Revoked{{else}}● Healthy{{end}}</span></div>
+    <div class="hint">{{.SpoolCount}} spool files ({{.SpoolBytesHuman}})</div>
+  </div>
+</div>
+
+{{if or .ServerURL .ConfigRev}}
+<div class="card" style="margin-top:14px">
+  <h3>Configuration</h3>
+  {{if .ServerURL}}<p class="hint">Server: {{.ServerURL}}</p>{{end}}
+  {{if .ConfigRev}}<p class="hint">Config revision: {{.ConfigRev}}</p>{{end}}
+  <p class="hint">API: <code>/status?json=1</code></p>
+</div>
+{{else}}
+<div class="card" style="margin-top:14px;border-left:3px solid #d97706;background:#fffbeb">
+  <h3>Configuration</h3>
+  <p class="hint">⚠ Config file not found — agent may be in initial / unconfigured state.</p>
+</div>
+{{end}}
+
+<footer class="notes">
+  Status page served by xentz-agent Local UI. Use <code>/status?json=1</code> for raw JSON API.
+</footer>
+</body>
+</html>

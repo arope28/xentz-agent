@@ -1,22 +1,22 @@
 package logging
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"xentz-agent/internal/controlapi"
 )
 
 const (
-	maxEntriesPerBatch = 100
+	maxEntriesPerBatch   = 100
 	minLogAgeForShipping = 1 * time.Hour
-	maxRetries = 3
+	maxRetries           = 3
 )
 
 // ShipLogs ships log entries from rotated log files to the control plane
@@ -117,19 +117,10 @@ func (l *Logger) shipBatch(entries []LogEntry, serverURL, apiKey string) error {
 		"logs": entries,
 	}
 
-	jsonData, err := json.Marshal(requestBody)
+	client, err := controlapi.New(serverURL, apiKey, 30*time.Second)
 	if err != nil {
-		return fmt.Errorf("marshal request: %w", err)
+		return err
 	}
-
-	url := strings.TrimSuffix(serverURL, "/") + "/admin/v1/logs"
-	req, err := http.NewRequest("POST", url, bytes.NewReader(jsonData))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	// Retry with exponential backoff
 	var lastErr error
@@ -140,25 +131,15 @@ func (l *Logger) shipBatch(entries []LogEntry, serverURL, apiKey string) error {
 			time.Sleep(backoff)
 		}
 
-		client := &http.Client{
-			Timeout: 30 * time.Second,
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
+		if err := client.PostJSON("/admin/v1/logs", requestBody, nil); err != nil {
+			if statusErr, ok := err.(*controlapi.StatusError); ok {
+				lastErr = fmt.Errorf("http error %d: %s", statusErr.StatusCode, statusErr.Body)
+				continue
+			}
 			lastErr = fmt.Errorf("http request: %w", err)
 			continue
 		}
-
-		// Read response body
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			return nil // Success
-		}
-
-		lastErr = fmt.Errorf("http error %d: %s", resp.StatusCode, string(body))
+		return nil
 	}
 
 	return fmt.Errorf("failed after %d retries: %w", maxRetries, lastErr)

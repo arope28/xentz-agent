@@ -11,7 +11,7 @@ import (
 
 type libsecretStore struct{}
 
-func newStore() Store {
+func newPlatformStore() Store {
 	if _, err := exec.LookPath("secret-tool"); err == nil {
 		return &libsecretStore{}
 	}

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"unsafe"
 
@@ -17,7 +16,7 @@ type dpapiStore struct {
 	dir string
 }
 
-func newStore() Store {
+func newPlatformStore() Store {
 	dir, err := paths.ConfigDir("")
 	if err != nil {
 		return &dpapiStore{dir: ""}
@@ -85,17 +84,6 @@ func (s *dpapiStore) pathForKey(key string) (string, error) {
 		return "", fmt.Errorf("invalid secret key")
 	}
 	return filepath.Join(s.dir, clean+".bin"), nil
-}
-
-func sanitizeKey(key string) string {
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return ""
-	}
-	key = strings.ReplaceAll(key, "/", "_")
-	key = strings.ReplaceAll(key, "\\", "_")
-	key = strings.ReplaceAll(key, "..", "_")
-	return key
 }
 
 type dataBlob struct {

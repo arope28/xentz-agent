@@ -1,10 +1,8 @@
 package enroll
 
 import (
-	"bytes"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -12,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"xentz-agent/internal/validation"
+	"xentz-agent/internal/controlapi"
 )
 
 // DeviceMetadata contains device information sent during enrollment
@@ -85,9 +83,9 @@ func Enroll(token, serverURL string, includePaths []string, principalID, display
 		return nil, fmt.Errorf("server URL is required")
 	}
 
-	// Validate server URL to prevent SSRF
-	if err := validation.ValidateServerURL(serverURL); err != nil {
-		return nil, fmt.Errorf("invalid server URL: %w", err)
+	client, err := controlapi.New(serverURL, token, 30*time.Second)
+	if err != nil {
+		return nil, err
 	}
 
 	// Collect device metadata
@@ -112,42 +110,13 @@ func Enroll(token, serverURL string, includePaths []string, principalID, display
 		Include:     includePaths,
 	}
 
-	jsonData, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("marshal enrollment request: %w", err)
-	}
-
-	// Make POST request to /control/v1/install with Authorization Bearer header
-	// Note: nginx proxies /control/* to the control plane backend
-	url := fmt.Sprintf("%s/control/v1/install", serverURL)
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
-
-	// Set timeout
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("enrollment request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errMsg bytes.Buffer
-		errMsg.ReadFrom(resp.Body)
-		return nil, fmt.Errorf("enrollment failed (status %d): %s", resp.StatusCode, errMsg.String())
-	}
-
-	// Parse response
 	var enrollmentResp EnrollmentResponse
-	if err := json.NewDecoder(resp.Body).Decode(&enrollmentResp); err != nil {
-		return nil, fmt.Errorf("decode enrollment response: %w", err)
+	if err := client.PostJSON("/control/v1/install", reqBody, &enrollmentResp); err != nil {
+		var statusErr *controlapi.StatusError
+		if errors.As(err, &statusErr) {
+			return nil, fmt.Errorf("enrollment failed (status %d): %s", statusErr.StatusCode, statusErr.Body)
+		}
+		return nil, fmt.Errorf("enrollment request failed: %w", err)
 	}
 
 	// Validate response

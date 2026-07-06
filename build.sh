@@ -4,20 +4,25 @@
 set -e
 
 VERSION=${VERSION:-$(date +%Y%m%d)}
+COMMIT=${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}
+BUILD_DATE=${BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+LDFLAGS="-s -w -X xentz-agent/internal/version.Version=$VERSION -X xentz-agent/internal/version.Commit=$COMMIT -X xentz-agent/internal/version.Date=$BUILD_DATE"
 DIST_DIR="dist"
 mkdir -p "$DIST_DIR"
 
 echo "Building xentz-agent for all platforms..."
 echo "Version: $VERSION"
+echo "Commit: $COMMIT"
+echo "Build date: $BUILD_DATE"
 echo ""
 
 # macOS - Intel (amd64)
 echo "Building for macOS (Intel/amd64)..."
-GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o "$DIST_DIR/xentz-agent-darwin-amd64" ./cmd/xentz-agent
+GOOS=darwin GOARCH=amd64 go build -ldflags="$LDFLAGS" -o "$DIST_DIR/xentz-agent-darwin-amd64" ./cmd/xentz-agent
 
 # macOS - Apple Silicon (arm64)
 echo "Building for macOS (Apple Silicon/arm64)..."
-GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o "$DIST_DIR/xentz-agent-darwin-arm64" ./cmd/xentz-agent
+GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -o "$DIST_DIR/xentz-agent-darwin-arm64" ./cmd/xentz-agent
 
 # macOS - Universal binary (works on both Intel and Apple Silicon)
 echo "Building for macOS (Universal binary)..."
@@ -32,28 +37,28 @@ fi
 
 # Windows - amd64
 echo "Building for Windows (amd64)..."
-GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o "$DIST_DIR/xentz-agent-windows-amd64.exe" ./cmd/xentz-agent
+GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o "$DIST_DIR/xentz-agent-windows-amd64.exe" ./cmd/xentz-agent
 
 # Windows - arm64 (Windows on ARM)
 echo "Building for Windows (arm64)..."
-GOOS=windows GOARCH=arm64 go build -ldflags="-s -w" -o "$DIST_DIR/xentz-agent-windows-arm64.exe" ./cmd/xentz-agent
+GOOS=windows GOARCH=arm64 go build -ldflags="$LDFLAGS" -o "$DIST_DIR/xentz-agent-windows-arm64.exe" ./cmd/xentz-agent
 
 # Linux - amd64
 echo "Building for Linux (amd64)..."
-GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o "$DIST_DIR/xentz-agent-linux-amd64" ./cmd/xentz-agent
+GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o "$DIST_DIR/xentz-agent-linux-amd64" ./cmd/xentz-agent
 
 # Linux - arm64
 echo "Building for Linux (arm64)..."
-GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o "$DIST_DIR/xentz-agent-linux-arm64" ./cmd/xentz-agent
+GOOS=linux GOARCH=arm64 go build -ldflags="$LDFLAGS" -o "$DIST_DIR/xentz-agent-linux-arm64" ./cmd/xentz-agent
 
 # Linux - ARMv7 (32-bit, for Raspberry Pi and older ARM devices)
 echo "Building for Linux (ARMv7)..."
-GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="-s -w" -o "$DIST_DIR/xentz-agent-linux-armv7" ./cmd/xentz-agent
+GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="$LDFLAGS" -o "$DIST_DIR/xentz-agent-linux-armv7" ./cmd/xentz-agent
 
 # FreeBSD - amd64 (optional, for completeness)
 if command -v go &> /dev/null && go env GOOS | grep -q darwin; then
     echo "Building for FreeBSD (amd64)..."
-    GOOS=freebsd GOARCH=amd64 go build -ldflags="-s -w" -o "$DIST_DIR/xentz-agent-freebsd-amd64" ./cmd/xentz-agent || echo "  ⚠ FreeBSD build skipped (may require cross-compilation tools)"
+    GOOS=freebsd GOARCH=amd64 go build -ldflags="$LDFLAGS" -o "$DIST_DIR/xentz-agent-freebsd-amd64" ./cmd/xentz-agent || echo "  ⚠ FreeBSD build skipped (may require cross-compilation tools)"
 fi
 
 echo ""
