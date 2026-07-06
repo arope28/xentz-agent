@@ -1,14 +1,11 @@
 package report
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"math/rand"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,9 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"xentz-agent/internal/controlapi"
 	"xentz-agent/internal/paths"
 	"xentz-agent/internal/state"
-	"xentz-agent/internal/validation"
 )
 
 const (
@@ -85,64 +82,27 @@ func truncateError(errMsg string) string {
 
 // SendReport sends a report to the server
 func SendReport(serverURL, deviceAPIKey string, report Report) error {
-	if serverURL == "" {
-		return fmt.Errorf("server URL is required")
-	}
-	if deviceAPIKey == "" {
+	if strings.TrimSpace(deviceAPIKey) == "" {
 		return fmt.Errorf("device API key is required")
 	}
-
-	// Validate server URL to prevent SSRF
-	if err := validation.ValidateServerURL(serverURL); err != nil {
-		return fmt.Errorf("invalid server URL: %w", err)
+	client, err := controlapi.New(serverURL, deviceAPIKey, 30*time.Second)
+	if err != nil {
+		return err
 	}
 
-	// Truncate error message if present
 	if report.Error != "" {
 		report.Error = truncateError(report.Error)
 	}
 
-	jsonData, err := json.Marshal(report)
-	if err != nil {
-		return fmt.Errorf("marshal report: %w", err)
-	}
-
-	// Make POST request to /control/v1/report
-	// Note: nginx proxies /control/* to the control plane backend
-	url := fmt.Sprintf("%s/control/v1/report", serverURL)
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", deviceAPIKey))
-
-	// Set timeout
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("report request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return ErrRevoked
-	}
-	if resp.StatusCode != http.StatusOK {
-		var errMsg bytes.Buffer
-		// Limit error message to prevent information leakage
-		io.CopyN(&errMsg, resp.Body, 512) // Limit to 512 bytes
-		errStr := strings.TrimSpace(errMsg.String())
-		// Remove newlines and limit length
-		errStr = strings.ReplaceAll(errStr, "\n", " ")
-		errStr = strings.ReplaceAll(errStr, "\r", " ")
-		if len(errStr) > 256 {
-			errStr = errStr[:256] + "..."
+	if err := client.PostJSON("/control/v1/report", report, nil); err != nil {
+		var statusErr *controlapi.StatusError
+		if errors.As(err, &statusErr) {
+			if statusErr.AuthFailure() {
+				return ErrRevoked
+			}
+			return fmt.Errorf("report failed (status %d): %s", statusErr.StatusCode, statusErr.Body)
 		}
-		return fmt.Errorf("report failed (status %d): %s", resp.StatusCode, errStr)
+		return fmt.Errorf("report request failed: %w", err)
 	}
 
 	return nil

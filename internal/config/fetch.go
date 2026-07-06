@@ -2,18 +2,16 @@ package config
 
 import (
 	"bytes"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"xentz-agent/internal/validation"
+	"xentz-agent/internal/controlapi"
 )
 
 // validateConfigResponseFromServer checks kill-switch, identity, required fields,
@@ -62,63 +60,24 @@ func validateConfigResponseFromServer(cfg Config) error {
 
 // FetchFromServer fetches configuration from the server using the device API key
 func FetchFromServer(serverURL, deviceAPIKey string) (Config, error) {
-	if serverURL == "" {
-		return Config{}, fmt.Errorf("server URL is required")
-	}
-	if deviceAPIKey == "" {
+	if strings.TrimSpace(deviceAPIKey) == "" {
 		return Config{}, fmt.Errorf("device API key is required")
 	}
-
-	// Validate server URL to prevent SSRF
-	if err := validation.ValidateServerURL(serverURL); err != nil {
-		return Config{}, fmt.Errorf("invalid server URL: %w", err)
-	}
-
-	// Make GET request to /control/v1/config
-	// Note: nginx proxies /control/* to the control plane backend
-	url := fmt.Sprintf("%s/control/v1/config", serverURL)
-	req, err := http.NewRequest("GET", url, nil)
+	client, err := controlapi.New(serverURL, deviceAPIKey, 30*time.Second)
 	if err != nil {
-		return Config{}, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", deviceAPIKey))
-	req.Header.Set("Accept", "application/json")
-
-	// Set timeout
-	client := &http.Client{
-		Timeout: 30 * time.Second,
+		return Config{}, err
 	}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return Config{}, fmt.Errorf("config fetch failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		var errMsg bytes.Buffer
-		errMsg.ReadFrom(resp.Body)
-		return Config{}, fmt.Errorf("authentication failed (status %d): invalid or revoked device API key", resp.StatusCode)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		var errMsg bytes.Buffer
-		// Limit error message to prevent information leakage
-		io.CopyN(&errMsg, resp.Body, 512) // Limit to 512 bytes
-		errStr := strings.TrimSpace(errMsg.String())
-		// Remove newlines and limit length
-		errStr = strings.ReplaceAll(errStr, "\n", " ")
-		errStr = strings.ReplaceAll(errStr, "\r", " ")
-		if len(errStr) > 256 {
-			errStr = errStr[:256] + "..."
-		}
-		return Config{}, fmt.Errorf("config fetch failed (status %d): %s", resp.StatusCode, errStr)
-	}
-
-	// Parse response
 	var cfg Config
-	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
-		return Config{}, fmt.Errorf("decode config response: %w", err)
+	if err := client.GetJSON("/control/v1/config", &cfg); err != nil {
+		var statusErr *controlapi.StatusError
+		if errors.As(err, &statusErr) {
+			if statusErr.AuthFailure() {
+				return Config{}, fmt.Errorf("authentication failed (status %d): invalid or revoked device API key", statusErr.StatusCode)
+			}
+			return Config{}, fmt.Errorf("config fetch failed (status %d): %s", statusErr.StatusCode, statusErr.Body)
+		}
+		return Config{}, fmt.Errorf("config fetch failed: %w", err)
 	}
 
 	if err := validateConfigResponseFromServer(cfg); err != nil {
@@ -189,57 +148,26 @@ func LoadWithFallback(serverURL, deviceAPIKey string) (Config, error) {
 // FetchPassword retrieves the restic password from the server
 // This is used to recover the password if the local password file is lost
 func FetchPassword(serverURL, deviceAPIKey string) (string, error) {
-	if serverURL == "" {
-		return "", fmt.Errorf("server URL is required")
-	}
-	if deviceAPIKey == "" {
+	if strings.TrimSpace(deviceAPIKey) == "" {
 		return "", fmt.Errorf("device API key is required")
 	}
-
-	// Validate server URL to prevent SSRF
-	if err := validation.ValidateServerURL(serverURL); err != nil {
-		return "", fmt.Errorf("invalid server URL: %w", err)
-	}
-
-	// Make GET request to /control/v1/password
-	url := fmt.Sprintf("%s/control/v1/password", serverURL)
-	req, err := http.NewRequest("GET", url, nil)
+	client, err := controlapi.New(serverURL, deviceAPIKey, 30*time.Second)
 	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", deviceAPIKey))
-	req.Header.Set("Accept", "application/json")
-
-	// Set timeout
-	client := &http.Client{
-		Timeout: 30 * time.Second,
+		return "", err
 	}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("password fetch failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		var errMsg bytes.Buffer
-		errMsg.ReadFrom(resp.Body)
-		return "", fmt.Errorf("authentication failed (status %d): invalid or revoked device API key", resp.StatusCode)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		var errMsg bytes.Buffer
-		io.CopyN(&errMsg, resp.Body, 512)
-		errStr := strings.TrimSpace(errMsg.String())
-		return "", fmt.Errorf("password fetch failed (status %d): %s", resp.StatusCode, errStr)
-	}
-
-	// Parse response
 	var passwordResp struct {
 		Password string `json:"password"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&passwordResp); err != nil {
-		return "", fmt.Errorf("decode password response: %w", err)
+	if err := client.GetJSON("/control/v1/password", &passwordResp); err != nil {
+		var statusErr *controlapi.StatusError
+		if errors.As(err, &statusErr) {
+			if statusErr.AuthFailure() {
+				return "", fmt.Errorf("authentication failed (status %d): invalid or revoked device API key", statusErr.StatusCode)
+			}
+			return "", fmt.Errorf("password fetch failed (status %d): %s", statusErr.StatusCode, statusErr.Body)
+		}
+		return "", fmt.Errorf("password fetch failed: %w", err)
 	}
 
 	if passwordResp.Password == "" {
@@ -251,73 +179,29 @@ func FetchPassword(serverURL, deviceAPIKey string) (string, error) {
 
 // UpdateConfigOnServer updates configuration on the server using the device API key
 func UpdateConfigOnServer(serverURL, deviceAPIKey string, include, exclude []string) (Config, error) {
-	if serverURL == "" {
-		return Config{}, fmt.Errorf("server URL is required")
-	}
-	if deviceAPIKey == "" {
+	if strings.TrimSpace(deviceAPIKey) == "" {
 		return Config{}, fmt.Errorf("device API key is required")
 	}
-
-	// Validate server URL to prevent SSRF
-	if err := validation.ValidateServerURL(serverURL); err != nil {
-		return Config{}, fmt.Errorf("invalid server URL: %w", err)
+	client, err := controlapi.New(serverURL, deviceAPIKey, 30*time.Second)
+	if err != nil {
+		return Config{}, err
 	}
 
-	// Prepare request body
 	reqBody := map[string]interface{}{
 		"include": include,
 		"exclude": exclude,
 	}
-	bodyBytes, err := json.Marshal(reqBody)
-	if err != nil {
-		return Config{}, fmt.Errorf("marshal request body: %w", err)
-	}
 
-	// Make PUT request to /control/v1/config
-	url := fmt.Sprintf("%s/control/v1/config", serverURL)
-	req, err := http.NewRequest("PUT", url, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return Config{}, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", deviceAPIKey))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	// Set timeout
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return Config{}, fmt.Errorf("config update failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		var errMsg bytes.Buffer
-		errMsg.ReadFrom(resp.Body)
-		return Config{}, fmt.Errorf("authentication failed (status %d): invalid or revoked device API key", resp.StatusCode)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		var errMsg bytes.Buffer
-		// Limit error message to prevent information leakage
-		io.CopyN(&errMsg, resp.Body, 512) // Limit to 512 bytes
-		errStr := strings.TrimSpace(errMsg.String())
-		// Remove newlines and limit length
-		errStr = strings.ReplaceAll(errStr, "\n", " ")
-		errStr = strings.ReplaceAll(errStr, "\r", " ")
-		if len(errStr) > 256 {
-			errStr = errStr[:256] + "..."
-		}
-		return Config{}, fmt.Errorf("config update failed (status %d): %s", resp.StatusCode, errStr)
-	}
-
-	// Parse response
 	var cfg Config
-	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
-		return Config{}, fmt.Errorf("decode config response: %w", err)
+	if err := client.PutJSON("/control/v1/config", reqBody, &cfg); err != nil {
+		var statusErr *controlapi.StatusError
+		if errors.As(err, &statusErr) {
+			if statusErr.AuthFailure() {
+				return Config{}, fmt.Errorf("authentication failed (status %d): invalid or revoked device API key", statusErr.StatusCode)
+			}
+			return Config{}, fmt.Errorf("config update failed (status %d): %s", statusErr.StatusCode, statusErr.Body)
+		}
+		return Config{}, fmt.Errorf("config update failed: %w", err)
 	}
 
 	if err := validateConfigResponseFromServer(cfg); err != nil {

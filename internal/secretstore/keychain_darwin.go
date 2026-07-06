@@ -13,7 +13,7 @@ const keychainService = "com.xentz.agent"
 
 type keychainStore struct{}
 
-func newStore() Store {
+func newPlatformStore() Store {
 	return &keychainStore{}
 }
 

@@ -1,5 +1,3 @@
-//go:build linux
-
 package secretstore
 
 import (
@@ -11,6 +9,9 @@ import (
 	"xentz-agent/internal/paths"
 )
 
+// fileStore keeps secrets as 0600 files under the per-user config dir. It is
+// the default on platforms without a native secret store and can be forced
+// with XENTZ_AGENT_SECRETSTORE=file (e.g. drills/CI needing HOME isolation).
 type fileStore struct {
 	dir string
 }

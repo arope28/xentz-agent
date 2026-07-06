@@ -1,14 +1,12 @@
 package enroll
 
 import (
-	"bytes"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
-	"xentz-agent/internal/validation"
+	"xentz-agent/internal/controlapi"
 )
 
 type RecoverRequest struct {
@@ -38,8 +36,9 @@ func Recover(serverURL, recoveryToken, principalID, displayName string) (*Enroll
 	if strings.TrimSpace(principalID) == "" {
 		return nil, fmt.Errorf("principal ID is required")
 	}
-	if err := validation.ValidateServerURL(serverURL); err != nil {
-		return nil, fmt.Errorf("invalid server URL: %w", err)
+	client, err := controlapi.New(serverURL, "", 30*time.Second)
+	if err != nil {
+		return nil, err
 	}
 
 	meta, _ := GetDeviceMetadata()
@@ -55,34 +54,14 @@ func Recover(serverURL, recoveryToken, principalID, displayName string) (*Enroll
 		DisplayName:   strings.TrimSpace(displayName),
 		Metadata:      metaMap,
 	}
-	b, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("marshal recover request: %w", err)
-	}
-
-	url := fmt.Sprintf("%s/control/v1/recover", serverURL)
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(b))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("recover request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errMsg bytes.Buffer
-		errMsg.ReadFrom(resp.Body)
-		return nil, fmt.Errorf("recover failed (status %d): %s", resp.StatusCode, strings.TrimSpace(errMsg.String()))
-	}
 
 	var rr RecoverResponse
-	if err := json.NewDecoder(resp.Body).Decode(&rr); err != nil {
-		return nil, fmt.Errorf("decode recover response: %w", err)
+	if err := client.PostJSON("/control/v1/recover", reqBody, &rr); err != nil {
+		var statusErr *controlapi.StatusError
+		if errors.As(err, &statusErr) {
+			return nil, fmt.Errorf("recover failed (status %d): %s", statusErr.StatusCode, strings.TrimSpace(statusErr.Body))
+		}
+		return nil, fmt.Errorf("recover request failed: %w", err)
 	}
 	if rr.TenantID == "" || rr.DeviceID == "" || rr.DeviceAPIKey == "" || rr.RepoPath == "" || rr.Password == "" {
 		return nil, fmt.Errorf("recover response missing required fields")
@@ -97,4 +76,3 @@ func Recover(serverURL, recoveryToken, principalID, displayName string) (*Enroll
 		Password:     rr.Password,
 	}, nil
 }
-

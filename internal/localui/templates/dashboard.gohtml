@@ -29,8 +29,8 @@ nav ul,.page-nav{display:flex;gap:8px;padding:0 0 20px;list-style:none;border-bo
 button,.btn-primary button,.btn-muted button{cursor:pointer;border-radius:9px;padding:7px 16px;font-size:13px;font-family:inherit}
 .btn-primary button,.primary{background:var(--blue);color:#fff;border-color:var(--blue)}
 .btn-primary button:hover,.primary:hover{background:#1d4ed8}
-.btn-muted {background:#fff;border-color:var(--line)}
-.btn-muted button:hover{border-color:#bfdbfe;background:#f0f7ff}
+button.btn-muted{background:#fff;color:#334155;border:1px solid var(--line);border-radius:9px;padding:7px 16px;font-size:13px;cursor:pointer}
+button.btn-muted:hover{border-color:#bfdbfe;background:#f0f7ff}
 footer.notes{margin-top:28px;font-size:12px;color:var(--muted)}#diag-toast{display:none;position:fixed;bottom:24px;right:24px;background:#1e293b;color:#fff;padding:12px 18px;border-radius:10px;font-size:13px;z-index:10}
 @media(max-width:700px){.grid4{grid-template-columns:1fr 1fr}.page-nav a{padding:5px 10px;font-size:12px}}
 </style>
@@ -56,7 +56,7 @@ footer.notes{margin-top:28px;font-size:12px;color:var(--muted)}#diag-toast{displ
     <p class="hint" id="sched-detail"></p>
   </div>
 
-  <actions-row class="actions-row">
+  <div class="actions-row">
     <button class="btn-primary primary"><span>&#x1f504; Save Config</span></button>
     <button class="btn-muted primary"><span>&#x2713; Pause/Resume Backups</span></button>
   </div>
@@ -66,7 +66,7 @@ footer.notes{margin-top:28px;font-size:12px;color:var(--muted)}#diag-toast{displ
 This page is served by the xentz-agent local UI.</footer>
 <div id="diag-toast"></div>
 
-<script>const T={{.RawToken}};async function f(p){try{const r=await fetch('/status?token='+encodeURIComponent(T));return r.ok?r.json():null}catch(e){return null}}
+<script>const T=`{{.Token}}`;async function f(p){try{const r=await fetch('/status?json=1&token='+encodeURIComponent(T));return r.ok?r.json():null}catch(e){return null}}
 function badge(id,k,h){document.getElementById(id).innerHTML='<span class="chip'+(k?' '+k:'')+'">'+h+'</span>'}
 async function load(){try{const d=await f();if(!d)return;badge('st-badge','ok','Healthy');
 badge('last-bk-time','',d.last_backup?new Date(d.last_backup.time_utc).toLocaleString():'Never');
