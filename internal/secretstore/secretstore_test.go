@@ -33,14 +33,11 @@ func TestNewStoreDefaultIsPlatformStore(t *testing.T) {
 	t.Setenv("XENTZ_AGENT_SECRETSTORE", "")
 
 	s := newStore()
-	if runtime.GOOS == "darwin" {
-		if _, ok := s.(*keychainStore); !ok {
-			t.Fatalf("expected *keychainStore by default on darwin, got %T", s)
-		}
-	}
 	if s == nil {
 		t.Fatal("newStore returned nil")
 	}
+	// The darwin-specific keychain assertion lives in secretstore_darwin_test.go;
+	// referencing the build-tagged type here would break test compilation elsewhere.
 }
 
 func TestFileStoreRoundTrip(t *testing.T) {
