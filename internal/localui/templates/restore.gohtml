@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>xentz-agent Restore Wizard</title>
+  <title>Xentz — Restore Wizard</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='85'>⬡</text></svg>">
   <style>
 html{color-scheme:dark}
     *, *::before, *::after { box-sizing: border-box; }
@@ -19,8 +20,11 @@ html{color-scheme:dark}
       --blue: #3d9cf0;
       --blue-soft: #14263a;
     }
-    body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px auto; max-width: 980px; line-height: 1.4; }
-    h1 { margin: 0 0 6px; }
+    body { background: radial-gradient(ellipse 120% 80% at 50% -20%, #1a2840 0%, var(--bg) 55%) fixed; color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; line-height: 1.4; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; padding: 0 28px; height: 56px; background: var(--card); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 10; }
+    .topbar-brand { font-weight: 700; font-size: 15px; letter-spacing: .3px; }
+    .page { max-width: 980px; margin: 0 auto; padding: 24px 20px 48px; }
+    h1 { margin: 0 0 6px; font-size: 20px; }
     .muted { color: var(--muted); margin: 0; }
     .layout { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-top: 16px; }
     .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
@@ -49,11 +53,23 @@ html{color-scheme:dark}
     pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-size: 12px; background: #0c0e12; border: 1px solid var(--line); border-radius: 8px; padding: 10px; min-height: 64px; }
     .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
     .hidden { display: none; }
+    input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--blue); padding: 0; justify-self: start; }
+    details summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+    details[open] summary { margin-bottom: 6px; }
+    .summary-box { font-size: 13px; background: var(--blue-soft); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+    .summary-box.ok { background: rgba(74,222,128,.08); border-color: rgba(74,222,128,.3); }
+    .summary-box.err { background: rgba(248,113,113,.08); border-color: rgba(248,113,113,.3); }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+    .chip.working { color: var(--blue); border-color: rgba(61,156,240,.35); background: rgba(61,156,240,.12); animation: pulse 1.4s ease-in-out infinite; }
     @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .row { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
-  <h1>Restore Wizard</h1>
+  <div class="topbar">
+    <span class="topbar-brand">⬡ Xentz — Restore Wizard</span>
+  </div>
+  <div class="page">
+  <h1>Restore files</h1>
   <p class="muted">Use this guided flow to safely restore one file, one folder, or a full snapshot.</p>
 
   <div class="layout">
@@ -70,9 +86,12 @@ html{color-scheme:dark}
         </div>
         <div class="row">
           <label for="snapshot">Snapshot</label>
-          <select id="snapshot">
-            <option value="latest">latest</option>
-          </select>
+          <div style="display:flex;gap:8px;">
+            <select id="snapshot" style="flex:1;min-width:0;">
+              <option value="latest">latest</option>
+            </select>
+            <button id="btn-load" type="button" title="Reload the snapshot list">Reload</button>
+          </div>
         </div>
         <div class="hint">Tip: choose <code>latest</code> unless you need an older version.</div>
       </div>
@@ -108,16 +127,15 @@ html{color-scheme:dark}
           </div>
         </div>
         <div class="row">
-          <label for="overwrite">Allow overwrite/merge</label>
+          <label for="overwrite">Allow overwriting existing files at the destination</label>
           <input id="overwrite" type="checkbox">
         </div>
-        <div class="hint">Safer default: restore into a new Desktop folder and review files before moving them back.</div>
+        <div class="hint">Safer default: leave this off and restore into a new Desktop folder, then review files before moving them back.</div>
       </div>
 
       <div id="step-3" class="step">
         <h3>Step 3: Preview and run</h3>
         <div class="actions">
-          <button id="btn-load">Reload snapshots</button>
           <button id="btn-plan">Preview restore plan</button>
           <button id="btn-run" class="primary" disabled>Run restore</button>
         </div>
@@ -128,17 +146,29 @@ html{color-scheme:dark}
     <div class="card">
       <h3 style="margin-top:0">Status</h3>
       <div id="status-chip" class="chip">Ready</div>
-      <p class="hint" id="status-text">Load snapshots, then preview your plan.</p>
+      <p class="hint" id="status-text">Pick a snapshot, then preview your plan.</p>
       <div style="margin-top:12px">
-        <h4 style="margin:0 0 6px">Plan preview</h4>
-        <pre id="plan">No plan yet.</pre>
+        <h4 style="margin:0 0 6px">Plan</h4>
+        <div id="plan-summary" class="summary-box">No plan yet — click “Preview restore plan”.</div>
+        <details style="margin-top:6px">
+          <summary>Technical details</summary>
+          <pre id="plan">No plan yet.</pre>
+        </details>
       </div>
-      <div style="margin-top:12px">
+      <div id="result-section" class="hidden" style="margin-top:12px">
         <h4 style="margin:0 0 6px">Restore result</h4>
-        <pre id="result">No restore run yet.</pre>
+        <div id="result-summary" class="summary-box"></div>
+        <div class="actions" style="margin-top:8px">
+          <button id="btn-copy-path" type="button" class="hidden">Copy destination path</button>
+        </div>
+        <details style="margin-top:6px">
+          <summary>Technical details</summary>
+          <pre id="result"></pre>
+        </details>
       </div>
     </div>
   </div>
+  </div> <!-- /page -->
 
   <script>
     const homeDir = {{ .HomeDirJS }};
@@ -162,7 +192,39 @@ html{color-scheme:dark}
     const runBtn = document.getElementById("btn-run");
     const statusChip = document.getElementById("status-chip");
     const statusText = document.getElementById("status-text");
+    const planSummaryEl = document.getElementById("plan-summary");
+    const resultSectionEl = document.getElementById("result-section");
+    const resultSummaryEl = document.getElementById("result-summary");
+    const copyPathBtn = document.getElementById("btn-copy-path");
     let lastPlanOk = false;
+    let runTimer = null;
+
+    function typeNoun() {
+      return typeEl.value === "file" ? "one file" : typeEl.value === "folder" ? "one folder" : "the full snapshot";
+    }
+
+    function friendlyTime(raw) {
+      if (!raw) return "";
+      const d = new Date(raw);
+      if (isNaN(d.getTime())) return raw;
+      const now = new Date();
+      const sameDay = d.toDateString() === now.toDateString();
+      const opts = sameDay ? { timeStyle: "short" } : { dateStyle: "medium", timeStyle: "short" };
+      return (sameDay ? "Today, " : "") + d.toLocaleString(undefined, opts);
+    }
+
+    function startRunTimer() {
+      const started = Date.now();
+      stopRunTimer();
+      runTimer = setInterval(() => {
+        const secs = Math.round((Date.now() - started) / 1000);
+        statusText.textContent = "Restore is running… " + secs + "s elapsed. Large restores can take a while.";
+      }, 1000);
+    }
+
+    function stopRunTimer() {
+      if (runTimer) { clearInterval(runTimer); runTimer = null; }
+    }
 
     function endpoint(path) {
       if (!token) return path;
@@ -181,7 +243,7 @@ html{color-scheme:dark}
     }
 
     function setStatus(kind, text) {
-      statusChip.className = "chip " + kind;
+      statusChip.className = "chip " + (kind === "" ? "working" : kind);
       statusChip.textContent = kind === "ok" ? "Ready" : kind === "warn" ? "Needs Attention" : kind === "err" ? "Error" : "Working";
       statusText.textContent = text;
     }
@@ -229,7 +291,6 @@ html{color-scheme:dark}
     }
 
     async function loadSnapshots() {
-      resultEl.textContent = "Loading snapshots...";
       setStatus("", "Loading restore snapshots...");
       setStep(1);
       try {
@@ -237,21 +298,19 @@ html{color-scheme:dark}
         snapshotEl.innerHTML = "";
         const latest = document.createElement("option");
         latest.value = "latest";
-        latest.textContent = "latest";
+        latest.textContent = "Latest backup";
         snapshotEl.appendChild(latest);
         (Array.isArray(data) ? data : []).slice(0, 50).forEach((s) => {
           const id = s.short_id || s.id;
-          const label = (id || "unknown") + (s.time ? ("  (" + s.time + ")") : "");
+          const when = friendlyTime(s.time);
           const opt = document.createElement("option");
           opt.value = s.id || "latest";
-          opt.textContent = label;
+          opt.textContent = when ? (when + "  (" + (id || "unknown") + ")") : (id || "unknown");
           snapshotEl.appendChild(opt);
         });
-        resultEl.textContent = "Snapshots loaded.";
         setStatus("ok", "Snapshots loaded. Continue to source/destination.");
       } catch (e) {
-        resultEl.textContent = "Snapshot load failed: " + e.message;
-        setStatus("err", "Snapshot load failed.");
+        setStatus("err", "Snapshot load failed: " + e.message);
       }
     }
 
@@ -343,7 +402,6 @@ html{color-scheme:dark}
         (data.entries || []).forEach(e => items.push(e));
         renderBrowseList(sourceBrowseListEl, items, (entry) => {
           if (entry.is_dir) {
-            pathEl.value = entry.path;
             browseSnapshot(entry.path);
           }
         }, (entry) => {
@@ -373,8 +431,29 @@ html{color-scheme:dark}
       }
     }
 
+    function describePlan(data) {
+      const p = payload();
+      const snapLabel = snapshotEl.selectedOptions.length ? snapshotEl.selectedOptions[0].textContent : p.snapshot_id;
+      if (!data.ok) {
+        const errs = Array.isArray(data.errors) && data.errors.length ? data.errors.join("; ") : "unknown validation error";
+        return { cls: "err", text: "This restore can't run yet: " + errs };
+      }
+      let text = "Will restore " + typeNoun();
+      if (p.type !== "snapshot" && p.path) text += " (" + p.path + ")";
+      text += " from “" + snapLabel + "” into " + p.target + ".";
+      if (data.confirm_required && !p.confirm_overwrite) {
+        return { cls: "err", text: text + " The destination already has files — tick “Allow overwriting existing files” in Step 2 to continue, or pick an empty destination." };
+      }
+      if (p.confirm_overwrite) {
+        return { cls: "ok", text: text + " Existing files at the destination may be overwritten." };
+      }
+      return { cls: "ok", text: text + " Nothing will be overwritten." };
+    }
+
     async function planRestore() {
       planEl.textContent = "Planning...";
+      planSummaryEl.className = "summary-box";
+      planSummaryEl.textContent = "Checking your restore plan…";
       setStatus("", "Validating restore request...");
       setStep(3);
       if (!targetEl.value.trim()) {
@@ -387,10 +466,13 @@ html{color-scheme:dark}
           body: JSON.stringify(payload())
         });
         planEl.textContent = JSON.stringify(data, null, 2);
-        lastPlanOk = !!data.ok;
+        const summary = describePlan(data);
+        planSummaryEl.className = "summary-box " + summary.cls;
+        planSummaryEl.textContent = summary.text;
+        lastPlanOk = !!data.ok && !(data.confirm_required && !payload().confirm_overwrite);
         runBtn.disabled = !lastPlanOk;
-        if (data.ok && data.confirm_required) {
-          setStatus("warn", "Plan ok, but target may be overwritten. Enable overwrite/merge to continue.");
+        if (data.ok && data.confirm_required && !payload().confirm_overwrite) {
+          setStatus("warn", "Destination is not empty. Allow overwriting or choose another destination.");
         } else if (data.ok) {
           setStatus("ok", "Plan looks good. You can run restore.");
         } else {
@@ -400,6 +482,8 @@ html{color-scheme:dark}
         lastPlanOk = false;
         runBtn.disabled = true;
         planEl.textContent = "Plan failed: " + e.message;
+        planSummaryEl.className = "summary-box err";
+        planSummaryEl.textContent = "Plan check failed: " + e.message;
         setStatus("err", "Plan request failed.");
       }
     }
@@ -409,9 +493,14 @@ html{color-scheme:dark}
         setStatus("warn", "Preview plan first before running restore.");
         return;
       }
+      resultSectionEl.classList.remove("hidden");
+      copyPathBtn.classList.add("hidden");
+      resultSummaryEl.className = "summary-box";
+      resultSummaryEl.textContent = "Restore is running…";
       resultEl.textContent = "Running restore...";
       runBtn.disabled = true;
       setStatus("", "Restore is running...");
+      startRunTimer();
       try {
         const data = await fetchJSON("/restore/run", {
           method: "POST",
@@ -419,14 +508,34 @@ html{color-scheme:dark}
           body: JSON.stringify(payload())
         });
         resultEl.textContent = JSON.stringify(data, null, 2);
+        const secs = data.duration_ms ? Math.max(1, Math.round(data.duration_ms / 1000)) : null;
+        resultSummaryEl.className = "summary-box ok";
+        resultSummaryEl.textContent = "✓ Restored " + typeNoun() + " to " + (data.target || payload().target) +
+          (secs ? " in " + secs + "s." : ".");
+        copyPathBtn.classList.remove("hidden");
+        copyPathBtn.dataset.path = data.target || payload().target;
         setStatus("ok", "Restore finished successfully.");
       } catch (e) {
         resultEl.textContent = "Restore failed: " + e.message;
+        resultSummaryEl.className = "summary-box err";
+        resultSummaryEl.textContent = "Restore failed: " + e.message + " — your backup data is unchanged; fix the issue and try again.";
         setStatus("err", "Restore failed.");
       } finally {
+        stopRunTimer();
         runBtn.disabled = false;
       }
     }
+
+    copyPathBtn.addEventListener("click", async () => {
+      const p = copyPathBtn.dataset.path || "";
+      try {
+        await navigator.clipboard.writeText(p);
+        copyPathBtn.textContent = "Copied!";
+      } catch (_) {
+        copyPathBtn.textContent = p; // clipboard unavailable: show the path on the button
+      }
+      setTimeout(() => { copyPathBtn.textContent = "Copy destination path"; }, 2000);
+    });
 
     typeEl.addEventListener("change", syncPathVisibility);
     snapshotEl.addEventListener("change", () => { lastPlanOk = false; runBtn.disabled = true; setStatus("warn", "Snapshot changed. Preview plan again."); });
