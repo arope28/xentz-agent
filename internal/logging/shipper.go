@@ -19,6 +19,12 @@ const (
 	maxRetries           = 3
 )
 
+// jsonPoster is the slice of controlapi.Client the shipper needs. Logger.newShipClient
+// lets tests substitute the transport.
+type jsonPoster interface {
+	PostJSON(path string, in, out any) error
+}
+
 // ShipLogs ships log entries from rotated log files to the control plane
 func (l *Logger) ShipLogs(serverURL, apiKey string) error {
 	if serverURL == "" || apiKey == "" {
@@ -117,7 +123,13 @@ func (l *Logger) shipBatch(entries []LogEntry, serverURL, apiKey string) error {
 		"logs": entries,
 	}
 
-	client, err := controlapi.New(serverURL, apiKey, 30*time.Second)
+	newClient := l.newShipClient
+	if newClient == nil {
+		newClient = func(serverURL, apiKey string) (jsonPoster, error) {
+			return controlapi.New(serverURL, apiKey, 30*time.Second)
+		}
+	}
+	client, err := newClient(serverURL, apiKey)
 	if err != nil {
 		return err
 	}
@@ -131,7 +143,10 @@ func (l *Logger) shipBatch(entries []LogEntry, serverURL, apiKey string) error {
 			time.Sleep(backoff)
 		}
 
-		if err := client.PostJSON("/admin/v1/logs", requestBody, nil); err != nil {
+		// The /control/ prefix is required: the public origin only proxies
+		// /control/* to the control plane (as the device-authed POST /v1/logs)
+		// and returns 404 for bare /admin/... paths.
+		if err := client.PostJSON("/control/v1/logs", requestBody, nil); err != nil {
 			if statusErr, ok := err.(*controlapi.StatusError); ok {
 				lastErr = fmt.Errorf("http error %d: %s", statusErr.StatusCode, statusErr.Body)
 				continue

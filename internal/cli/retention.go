@@ -70,12 +70,9 @@ func RunRetention(args []string) error {
 		log.Printf("save last retention run: %v", err)
 	}
 
+	var logShipDone <-chan struct{}
 	if logger != nil && localCfg.DeviceID != "" && localCfg.DeviceAPIKey != "" && localCfg.ServerURL != "" {
-		go func() {
-			if err := logger.ShipLogs(localCfg.ServerURL, localCfg.DeviceAPIKey); err != nil {
-				log.Printf("warning: failed to ship logs: %v", err)
-			}
-		}()
+		logShipDone = shipLogsInBackground(logger, localCfg.ServerURL, localCfg.DeviceAPIKey)
 	}
 
 	if localCfg.DeviceID != "" && localCfg.DeviceAPIKey != "" && localCfg.ServerURL != "" {
@@ -103,14 +100,6 @@ func RunRetention(args []string) error {
 		_ = report.CleanupOldReports(30 * 24 * time.Hour)
 	}
 
-	if logger != nil && localCfg.DeviceID != "" && localCfg.DeviceAPIKey != "" && localCfg.ServerURL != "" {
-		go func() {
-			if err := logger.ShipLogs(localCfg.ServerURL, localCfg.DeviceAPIKey); err != nil {
-				log.Printf("warning: failed to ship logs: %v", err)
-			}
-		}()
-	}
-
 	if res.Status != "success" {
 		if logger != nil {
 			logger.Error("retention failed", fmt.Errorf("%s", res.Error), map[string]interface{}{
@@ -118,6 +107,7 @@ func RunRetention(args []string) error {
 			})
 		}
 		log.Printf("retention failed ❌: %s", res.Error)
+		awaitLogShipping(logShipDone)
 		os.Exit(1)
 	}
 
@@ -127,5 +117,6 @@ func RunRetention(args []string) error {
 		})
 	}
 	log.Printf("retention ok ✅: duration=%s", res.Duration)
+	awaitLogShipping(logShipDone)
 	return nil
 }

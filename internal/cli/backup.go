@@ -73,12 +73,9 @@ func RunBackup(args []string) error {
 		log.Printf("save last run: %v", err)
 	}
 
+	var logShipDone <-chan struct{}
 	if logger != nil && localCfg.DeviceID != "" && localCfg.DeviceAPIKey != "" && localCfg.ServerURL != "" {
-		go func() {
-			if err := logger.ShipLogs(localCfg.ServerURL, localCfg.DeviceAPIKey); err != nil {
-				log.Printf("warning: failed to ship logs: %v", err)
-			}
-		}()
+		logShipDone = shipLogsInBackground(logger, localCfg.ServerURL, localCfg.DeviceAPIKey)
 	}
 
 	if localCfg.DeviceID != "" && localCfg.DeviceAPIKey != "" && localCfg.ServerURL != "" {
@@ -117,6 +114,7 @@ func RunBackup(args []string) error {
 			})
 		}
 		log.Printf("backup failed ❌: %s", res.Error)
+		awaitLogShipping(logShipDone)
 		os.Exit(1)
 	}
 
@@ -131,6 +129,7 @@ func RunBackup(args []string) error {
 		})
 	}
 	log.Printf("backup ok ✅: duration=%s data_added=%s", res.Duration, formatBackupBytes(res.BytesSent))
+	awaitLogShipping(logShipDone)
 	return nil
 }
 

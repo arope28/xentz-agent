@@ -41,6 +41,10 @@ type Logger struct {
 	mu        sync.Mutex
 	minLevel  LogLevel
 	component string
+
+	// newShipClient overrides the control-plane client used by ShipLogs;
+	// nil means controlapi.New. Tests inject a fake here.
+	newShipClient func(serverURL, apiKey string) (jsonPoster, error)
 }
 
 // NewLogger creates a new logger instance
