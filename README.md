@@ -251,7 +251,7 @@ The agent calls `GET /v1/config` on every backup/retention run using the `device
 The agent sends backup and retention metrics to `POST /v1/report` after each run, with automatic retry for failed reports.
 
 ### Log Shipping
-The agent ships structured logs to `POST /admin/v1/logs` for centralized analysis and troubleshooting.
+The agent ships structured logs to `POST /v1/logs` (reached as `/control/v1/logs` through the public origin) for centralized analysis and troubleshooting.
 
 ## Documentation
 
