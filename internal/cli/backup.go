@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"os"
 	"time"
 
 	"xentz-agent/internal/backup"
@@ -115,7 +114,9 @@ func RunBackup(args []string) error {
 		}
 		log.Printf("backup failed ❌: %s", res.Error)
 		awaitLogShipping(logShipDone)
-		os.Exit(1)
+		// Return rather than os.Exit so the deferred logger.Close still runs
+		// and this failure's log entry is actually written.
+		return failWithCode(fmt.Errorf("backup failed: %s", res.Error), 1)
 	}
 
 	if logger != nil {

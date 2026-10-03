@@ -43,12 +43,12 @@ footer.notes{margin-top:28px;font-size:12px;color:#8b93a7;border-top:1px solid #
 <div class="card" style="margin-bottom:14px">
   <h2>Schedule & State</h2>
   <div class="row"><label class="config-label">Config Revision:</label><input type="text" readonly value="{{.ConfigRev}}" placeholder="—"></div>
-  <div class="row"><label class="config-label">Enabled:</label><span class="pill">{{if .EnableBool}}✓ Enabled{{else}}✗ Disabled (Kill Switch){{end}}</span></div>
+  <div class="row"><label class="config-label">Enabled:</label><span class="pill">{{if not .EnableKnown}}— Not set by server{{else if .EnableBool}}✓ Enabled{{else}}✗ Disabled (Kill Switch){{end}}</span></div>
 </div>
 
 <div class="card" style="margin-bottom:14px">
   <h2>Backup Paths</h2>
-  <div class="row"><label class="config-label">Schedule:</label><input type="text" readonly value="{{.ScheduleCron}}"></div>
+  <div class="row"><label class="config-label">Schedule:</label><input type="text" readonly value="{{.ScheduleStr}}"></div>
   <div class="row"><label class="config-label">Include:</label></div>
   {{range .IncludePaths}}<div class="row" style="padding-left:210px"><span style="color:#c3cad9">↳ {{.}}</span></div>
   {{end}}
@@ -72,6 +72,6 @@ footer.notes{margin-top:28px;font-size:12px;color:#8b93a7;border-top:1px solid #
   <div class="row"><label class="config-label">Password File:</label><input type="text" readonly value="{{.PasswordFile}}"{{if not .PasswordFile}} placeholder="Not configured"{{end}}></div>
 </div>
 
-<footer class="notes">Config page served by xentx-agent Local UI — read-only.</footer>
+<footer class="notes">Config page served by xentz-agent Local UI — read-only.</footer>
 </body>
 </html>

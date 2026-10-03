@@ -24,15 +24,18 @@ func (s *Server) handleStatus(cfgPath string) http.HandlerFunc {
 
 		// API compat: ?json=1 returns raw JSON (only when we can read config)
 		if r.URL.Query().Get("json") == "1" && cfgErr == nil {
-			var lastBackupTime string
+			var lastBackupTime, lastBackupStatus string
 			if bOK {
 				lastBackupTime = lr.TimeUTC
+				lastBackupStatus = lr.Status
 			}
-			var retentionTime string
+			var retentionTime, retentionStatus string
 			if rtOK {
 				retentionTime = lrt.TimeUTC
+				retentionStatus = lrt.Status
 			}
-			writeJSON(w, map[string]interface{}{
+
+			payload := map[string]interface{}{
 				"last_backup":     lastBackupTime,
 				"last_retention":  retentionTime,
 				"revoked":         agentState.Revoked,
@@ -40,7 +43,23 @@ func (s *Server) handleStatus(cfgPath string) http.HandlerFunc {
 				"spool_bytes":     spoolBytes,
 				"server_url":      cfg.ServerURL,
 				"config_revision": cfg.ConfigRevision,
-			})
+
+				// Additive fields for the dashboard. last_backup/last_retention
+				// above stay RFC3339 strings for backwards compatibility.
+				"last_backup_status":    lastBackupStatus,
+				"last_retention_status": retentionStatus,
+				"last_backup_files":     lr.FilesTotal,
+				"last_backup_bytes":     lr.BytesSent,
+				"enabled":               cfg.Enabled == nil || *cfg.Enabled,
+				"include":               cfg.Include,
+				"exclude":               cfg.Exclude,
+				"daily_at":              cfg.Schedule.DailyAt,
+				"retention_summary":     describeRetention(cfg.Retention),
+			}
+			if lr.Error != "" {
+				payload["last_backup_error"] = lr.Error
+			}
+			writeJSON(w, payload)
 			return
 		}
 
@@ -105,16 +124,19 @@ func (s *Server) handleConfig(cfgPath string) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-		var enableBool bool = false
-		if cfgErr == nil && cfg.Enabled != nil {
-			enableBool = *cfg.Enabled
+		// A nil Enabled means the server has not expressed a kill-switch, which
+		// is different from "disabled" - render the three states separately.
+		enableKnown := cfgErr == nil && cfg.Enabled != nil
+		enableBool := cfgErr == nil && (cfg.Enabled == nil || *cfg.Enabled)
+
+		scheduleStr := "Using defaults"
+		if cfgErr == nil {
+			scheduleStr = fmt.Sprintf("%s (revision %d)", describeSchedule(cfg.Schedule.DailyAt), cfg.ConfigRevision)
 		}
 
-		var scheduleStr string
+		retentionStr := "default"
 		if cfgErr == nil {
-			scheduleStr = fmt.Sprintf("Every 6h at midnight (revision %d)", cfg.ConfigRevision)
-		} else {
-			scheduleStr = "Using defaults"
+			retentionStr = describeRetention(cfg.Retention)
 		}
 
 		data := ConfigPageData{
@@ -123,12 +145,13 @@ func (s *Server) handleConfig(cfgPath string) http.HandlerFunc {
 			DeviceID:     "",
 			UserID:       "",
 			ConfigRev:    0,
-			EnableState:  "Disabled",
-			ScheduleCron: scheduleStr,
+			EnableBool:   enableBool,
+			EnableKnown:  enableKnown,
+			ScheduleStr:  scheduleStr,
 			IncludePaths: []string{},
 			ExcludePaths: []string{},
 			ResticRepo:   "",
-			Retention:    "default",
+			Retention:    retentionStr,
 			PasswordFile: "",
 			ConfigFound:  false,
 		}
@@ -139,16 +162,11 @@ func (s *Server) handleConfig(cfgPath string) http.HandlerFunc {
 			data.DeviceID = cfg.DeviceID
 			data.UserID = cfg.UserID
 			data.ConfigRev = cfg.ConfigRevision
-			if enableBool {
-				data.EnableState = "Enabled"
-			} else {
-				data.EnableState = "Disabled"
-			}
-			data.ScheduleCron = scheduleStr
+			data.ScheduleStr = scheduleStr
 			data.IncludePaths = cfg.Include
 			data.ExcludePaths = cfg.Exclude
 			data.ResticRepo = cfg.Restic.Repository
-			data.Retention = "default"
+			data.Retention = retentionStr
 			data.PasswordFile = cfg.Restic.PasswordFile
 			data.ConfigFound = true
 		}

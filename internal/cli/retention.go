@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"os"
 	"time"
 
 	"xentz-agent/internal/backup"
@@ -108,7 +107,8 @@ func RunRetention(args []string) error {
 		}
 		log.Printf("retention failed ❌: %s", res.Error)
 		awaitLogShipping(logShipDone)
-		os.Exit(1)
+		// Return rather than os.Exit so the deferred logger.Close still runs.
+		return failWithCode(fmt.Errorf("retention failed: %s", res.Error), 1)
 	}
 
 	if logger != nil {

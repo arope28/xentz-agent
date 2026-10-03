@@ -137,6 +137,20 @@ Note: With token-based enrollment, configuration (including retention policy) is
 `)
 }
 
+// run dispatches a command and returns the process exit code.
+//
+// A command that already reported its failure to the user returns a
+// cli exitError; we honour its code without printing the message again.
+func run(run func([]string) error, args []string) int {
+	if err := run(args); err != nil {
+		if code, ok := cli.ExitCode(err); ok {
+			return code
+		}
+		log.Fatal(err)
+	}
+	return 0
+}
+
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 
@@ -157,82 +171,43 @@ func main() {
 		return
 
 	case "install":
-		if err := cli.RunInstall(os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
+		os.Exit(run(cli.RunInstall, os.Args[2:]))
 
 	case "doctor":
-		if err := cli.RunDoctor(os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
+		os.Exit(run(cli.RunDoctor, os.Args[2:]))
 
 	case "recover":
-		if err := cli.RunRecover(os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
+		os.Exit(run(cli.RunRecover, os.Args[2:]))
 
 	case "uninstall":
-		if err := cli.RunUninstall(os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
+		os.Exit(run(cli.RunUninstall, os.Args[2:]))
 
 	case "upgrade":
-		if err := cli.RunUpgrade(os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
+		os.Exit(run(cli.RunUpgrade, os.Args[2:]))
 
 	case "diagnostics":
-		if err := cli.RunDiagnostics(os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
+		os.Exit(run(cli.RunDiagnostics, os.Args[2:]))
 
 	case "local-ui":
-		if err := cli.RunLocalUI(os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
+		os.Exit(run(cli.RunLocalUI, os.Args[2:]))
 
 	case "service":
-		if err := cli.RunService(os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
+		os.Exit(run(cli.RunService, os.Args[2:]))
 
 	case "backup":
-		if err := cli.RunBackup(os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
+		os.Exit(run(cli.RunBackup, os.Args[2:]))
 
 	case "restore":
-		if err := cli.RunRestore(os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
+		os.Exit(run(cli.RunRestore, os.Args[2:]))
 
 	case "retention":
-		if err := cli.RunRetention(os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
+		os.Exit(run(cli.RunRetention, os.Args[2:]))
 
 	case "status":
-		if err := cli.RunStatus(os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
+		os.Exit(run(cli.RunStatus, os.Args[2:]))
 
 	case "config":
-		if err := cli.RunConfig(os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
+		os.Exit(run(cli.RunConfig, os.Args[2:]))
 
 	default:
 		usage()
