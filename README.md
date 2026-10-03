@@ -72,7 +72,8 @@ irm https://github.com/arope28/xentz-agent/releases/latest/download/install.ps1 
 xentz-agent install --token <install-token> --server <control-plane-url> --include <paths>
 
 # Or use legacy mode with direct repository
-xentz-agent install --repo <url> --password <pwd> --include <paths>
+# Prefer the env var over --password so the secret stays out of shell history:
+XENTZ_AGENT_RESTIC_PASSWORD=<pwd> xentz-agent install --repo <url> --include <paths>
 
 # Run a backup manually
 xentz-agent backup
@@ -83,16 +84,20 @@ xentz-agent retention
 # Check the status of the last backup
 xentz-agent status
 
+# Machine-readable status, for monitoring scripts
+xentz-agent status --json
+
 # Update backup paths
 xentz-agent config --add-include "/path/to/dir" --add-exclude "*.tmp"
 
-# Uninstall and optionally purge state/logs
+# Uninstall. --purge-state permanently deletes logs, queued reports and stored
+# credentials, so it asks for confirmation; add --yes to skip the prompt.
 xentz-agent uninstall --mode user --purge-state
 
 # Create diagnostics bundle
 xentz-agent diagnostics --out /tmp/xentz-agent-diag.zip
 
-# Localhost-only status UI
+# Localhost-only status UI (prints a ready-to-open URL)
 xentz-agent local-ui --addr 127.0.0.1:9800
 ```
 
@@ -222,6 +227,9 @@ Example (system mode on Linux):
 
 ## Notes
 
+- **restic is a runtime dependency.** `install` warns when restic is missing from `PATH` and prints the install command for your platform, rather than letting the first scheduled backup fail.
+- **Scheduling**: `--daily-at HH:MM` is validated before the device is enrolled, so a typo cannot leave a half-installed agent.
+- **Passwords on the command line**: `--password` is readable from shell history and `ps`. Use `XENTZ_AGENT_RESTIC_PASSWORD` instead; `install` warns when `--password` is used.
 - **macOS ARM64 vs Intel**: No code changes needed! The same code works on both architectures. Just build separate binaries or use a universal binary (created automatically by `build.sh` on macOS).
 - **Linux ARMv7**: Included for compatibility with older ARM devices like Raspberry Pi.
 - **Windows on ARM**: Full support for Windows 11 on ARM devices.

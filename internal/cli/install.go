@@ -50,6 +50,22 @@ func RunInstall(args []string) error {
 		return fmt.Errorf("resolve config path: %w", err)
 	}
 
+	// Validate the schedule before anything is enrolled or written. A bad
+	// --daily-at used to be caught by the scheduler install at the very end,
+	// leaving the device enrolled with no working schedule.
+	if strings.TrimSpace(*dailyAt) != "" {
+		if err := install.ValidateDailyAt(*dailyAt); err != nil {
+			return fmt.Errorf("invalid --daily-at %q: %w (expected HH:MM in 24h, e.g. 02:00)", *dailyAt, err)
+		}
+	}
+
+	warnIfResticMissing()
+
+	if *password != "" {
+		fmt.Println("⚠  --password is visible in shell history and process listings.")
+		fmt.Printf("    Prefer:  %s=<password> xentz-agent install ...\n", envResticPassword)
+	}
+
 	var cfg config.Config
 	if existingCfg, err := config.Read(cfgFile); err == nil {
 		cfg = existingCfg
@@ -134,20 +150,21 @@ func RunInstall(args []string) error {
 				if err := storeInstallPassword(enrollmentResult.Password, *passwordFile, &cfg); err != nil {
 					return err
 				}
-			} else if *password != "" {
-				if err := storeInstallPassword(*password, *passwordFile, &cfg); err != nil {
+			} else if pw := resolveResticPassword(*password); pw != "" {
+				if err := storeInstallPassword(pw, *passwordFile, &cfg); err != nil {
 					return err
 				}
 			} else {
-				return fmt.Errorf("password required: either server must provide it or use --password flag")
+				return fmt.Errorf("password required: the server did not provide one. Pass --password, or set %s=<password> to keep it out of shell history", envResticPassword)
 			}
 		}
 	} else if *repo != "" {
 		log.Println("Using legacy mode with direct repository URL")
-		if *password == "" {
-			return fmt.Errorf("--password is required when using --repo (legacy mode)")
+		pw := resolveResticPassword(*password)
+		if pw == "" {
+			return fmt.Errorf("--password is required when using --repo (legacy mode). You can also set %s=<password>", envResticPassword)
 		}
-		if err := storeInstallPassword(*password, *passwordFile, &cfg); err != nil {
+		if err := storeInstallPassword(pw, *passwordFile, &cfg); err != nil {
 			return err
 		}
 		cfg.Restic.Repository = *repo
@@ -185,9 +202,49 @@ func RunInstall(args []string) error {
 	}
 
 	log.Println("install complete ✅")
+	printNextSteps(*mode, cfg.Schedule.DailyAt, cfg.Include)
 	return nil
 }
 
+// envResticPassword is the environment variable users can set to supply the
+// repository password without exposing it in shell history or ps output.
+const envResticPassword = "XENTZ_AGENT_RESTIC_PASSWORD"
+
+// resolveResticPassword returns the password from the flag if given, else from
+// the environment variable. Whitespace-only values are treated as unset.
+func resolveResticPassword(flagValue string) string {
+	if strings.TrimSpace(flagValue) != "" {
+		return flagValue
+	}
+	return strings.TrimSpace(os.Getenv(envResticPassword))
+}
+
+// printNextSteps spells out what to do after install. Previously the command
+// ended at "install complete", leaving users to guess how to verify it works.
+func printNextSteps(mode, dailyAt string, includePaths []string) {
+	steps := []string{}
+	if len(includePaths) == 0 {
+		steps = append(steps,
+			`Add a folder to back up:  xentz-agent config --add-include "/path/to/folder"`,
+			"Run your first backup now:   xentz-agent backup")
+	} else {
+		steps = append(steps, "Run your first backup now:   xentz-agent backup")
+	}
+	steps = append(steps,
+		"Check the last run:           xentz-agent status",
+		"Open the dashboard:           xentz-agent local-ui",
+		"Verify the whole setup:       xentz-agent doctor --check-server")
+
+	fmt.Println()
+	fmt.Printf("Backups are scheduled %s.\n", describeSchedulePhrase(dailyAt))
+	fmt.Println("Next steps:")
+	for _, s := range steps {
+		fmt.Println("  " + s)
+	}
+	fmt.Printf("\nInstalled in %s mode. Uninstall with:  xentz-agent uninstall --mode %s\n", mode, mode)
+}
+
+// storeInstallPassword persists the restic password and records where it went.
 func storeInstallPassword(password, passwordFile string, cfg *config.Config) error {
 	if err := config.StoreResticPassword(password); err != nil {
 		log.Printf("warning: store restic password failed: %v", err)

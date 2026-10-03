@@ -84,6 +84,7 @@ Flags (retention):
 
 Flags (status):
   --config       Config path override (default: <CONFIG_DIR>/config.json)
+  --json         Print machine-readable JSON instead of the human-readable summary
 
 Flags (install):
   --token         Install token for enrollment (recommended, provided by control plane)
@@ -92,7 +93,8 @@ Flags (install):
   --mode          Install mode: user or system (default: user)
   --force         Replace existing enrollment (clears stored API key + local identity before enroll)
   --repo          Restic repository URL (legacy mode, use --token instead)
-  --password      Restic repository password (optional if server provides via enrollment)
+  --password      Restic repository password (optional if server provides via enrollment).
+                  Visible in shell history; prefer XENTZ_AGENT_RESTIC_PASSWORD=<password>
   --password-file Path to restic password file (optional, default: <CONFIG_DIR>/restic.pw)
   --include       Repeatable. Add include paths. Example: --include "/Users/me/Documents" --include "/Users/me/Pictures"
   --exclude       Repeatable. Add exclude globs.
@@ -101,7 +103,8 @@ Flags (install):
 Flags (uninstall):
   --mode         Uninstall mode: user or system (default: user)
   --keep-config  Keep config directory (default: true)
-  --purge-state  Remove state/log directories (default: false)
+  --purge-state  Permanently delete state, logs and stored credentials (prompts first)
+  --yes          Skip the confirmation prompt (for scripted uninstalls)
   --config       Config path override (default: <CONFIG_DIR>/config.json)
 
 Flags (upgrade):
