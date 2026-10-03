@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"flag"
 	"fmt"
 	"os"
 
@@ -11,10 +10,12 @@ import (
 )
 
 func RunRestore(args []string) error {
-	rfs := flag.NewFlagSet("restore", flag.ExitOnError)
+	rfs := newFlagSet("restore")
 	restoreConfigPath := rfs.String("config", "", "Config path override")
-	if err := rfs.Parse(args); err != nil {
-		return fmt.Errorf("parse flags: %w", err)
+	if help, err := parseFlags(rfs, args); err != nil {
+		return err
+	} else if help {
+		return nil
 	}
 	cfgFile, err := config.ResolvePath(*restoreConfigPath)
 	if err != nil {

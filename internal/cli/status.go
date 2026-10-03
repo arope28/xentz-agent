@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -32,11 +31,13 @@ type statusReport struct {
 }
 
 func RunStatus(args []string) error {
-	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	fs := newFlagSet("status")
 	configPath := fs.String("config", "", "Config path override")
 	asJSON := fs.Bool("json", false, "Print machine-readable JSON")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("parse flags: %w", err)
+	if help, err := parseFlags(fs, args); err != nil {
+		return err
+	} else if help {
+		return nil
 	}
 
 	rep, err := collectStatus(*configPath)
@@ -150,7 +151,51 @@ func printStatusReport(rep statusReport) {
 
 	if !rep.RepoConfigured {
 		fmt.Println("⚠  No repository configured - run `xentz-agent install` or `xentz-agent recover`.")
+		fmt.Println("   For a full check of the setup, run `xentz-agent doctor`.")
+		return
 	}
+
+	// Point people at doctor only when something is actually wrong, so the two
+	// commands have a clear split: status = is it OK, doctor = why not.
+	if reasons := statusProblems(rep); len(reasons) > 0 {
+		fmt.Println()
+		fmt.Println("⚠  Needs attention:")
+		for _, r := range reasons {
+			fmt.Printf("   - %s\n", r)
+		}
+		fmt.Println("   Run `xentz-agent doctor` for details, or `xentz-agent backup` to retry now.")
+	}
+}
+
+// statusProblems lists what is wrong from a quick-look perspective.
+func statusProblems(rep statusReport) []string {
+	var out []string
+	switch {
+	case rep.Revoked:
+		out = append(out, "the server rejected this device's API key, so backups cannot run")
+	case rep.Enabled != nil && !*rep.Enabled:
+		out = append(out, "this device is disabled by the server (kill switch)")
+	case !rep.HasBackup:
+		out = append(out, "no backup has run yet on this machine")
+	case rep.Backup.Status != "success":
+		out = append(out, fmt.Sprintf("the last backup failed: %s", firstLine(rep.Backup.Error)))
+	}
+	if rep.IncludeCount == 0 {
+		out = append(out, "no include paths are configured, so a backup would copy nothing")
+	}
+	return out
+}
+
+// firstLine trims a multi-line error down to something that fits on one line.
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "(no error detail recorded)"
+	}
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return strings.TrimSpace(s[:i]) + " ..."
+	}
+	return s
 }
 
 // printRun renders one run in the two-line form: a headline with the age of the
@@ -185,9 +230,10 @@ func printRun(label string, ok bool, run state.LastRun) {
 	if len(details) > 0 {
 		fmt.Printf("%-16s %s\n", "", strings.Join(details, " · "))
 	}
-	// Only surface an error when there is one.
+	// Only surface an error when there is one, and keep it to a single line:
+	// the untruncated text is available via `status --json` and the log file.
 	if strings.TrimSpace(run.Error) != "" {
-		fmt.Printf("%-16s %s\n", "", strings.TrimSpace(run.Error))
+		fmt.Printf("%-16s %s\n", "", firstLine(run.Error))
 	}
 	fmt.Println()
 }

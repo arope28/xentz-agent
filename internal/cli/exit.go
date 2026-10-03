@@ -18,8 +18,13 @@ func (e *exitError) Error() string { return e.err.Error() }
 func (e *exitError) Unwrap() error { return e.err }
 
 // ExitCode returns the process exit code carried by err, defaulting to 1.
-// The second return value reports whether err was an exitError at all.
+// The second return value reports whether the caller already reported the
+// problem, in which case main must not print it again.
 func ExitCode(err error) (int, bool) {
+	var ue *usageError
+	if errors.As(err, &ue) {
+		return 2, true
+	}
 	var e *exitError
 	if !errors.As(err, &e) {
 		return 1, false

@@ -87,6 +87,18 @@ xentz-agent status
 # Machine-readable status, for monitoring scripts
 xentz-agent status --json
 
+# Deep check: enrollment, secrets, restic, restore destination, server auth
+xentz-agent doctor --check-server
+
+# Doctor returns a non-zero exit code when it finds a problem (for onboarding
+# scripts and CI). Without --strict it always exits 0.
+xentz-agent doctor --check-server --strict
+
+# Help: top-level, per-command examples, or every flag
+xentz-agent help
+xentz-agent help restore
+xentz-agent restore --help
+
 # Update backup paths
 xentz-agent config --add-include "/path/to/dir" --add-exclude "*.tmp"
 
@@ -227,6 +239,8 @@ Example (system mode on Linux):
 
 ## Notes
 
+- **`status` vs `doctor`**: `status` answers "is everything OK?" at a glance; when something looks wrong it lists what needs attention and points at `doctor`, which explains why. `doctor` prints a full diagnostic report and, with `--strict`, exits non-zero so onboarding scripts can gate on it.
+- **Help**: `xentz-agent help` lists commands, `xentz-agent help <command>` shows examples, and `xentz-agent <command> --help` prints that command's actual flags straight from the code. Asking for help exits 0; an invalid flag exits 2.
 - **restic is a runtime dependency.** `install` warns when restic is missing from `PATH` and prints the install command for your platform, rather than letting the first scheduled backup fail.
 - **Scheduling**: `--daily-at HH:MM` is validated before the device is enrolled, so a typo cannot leave a half-installed agent.
 - **Passwords on the command line**: `--password` is readable from shell history and `ps`. Use `XENTZ_AGENT_RESTIC_PASSWORD` instead; `install` warns when `--password` is used.

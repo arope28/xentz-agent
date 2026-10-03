@@ -2,7 +2,6 @@ package cli
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -25,7 +24,7 @@ func (m *installMultiFlag) Set(v string) error {
 }
 
 func RunInstall(args []string) error {
-	fs := flag.NewFlagSet("install", flag.ExitOnError)
+	fs := newFlagSet("install")
 	server := fs.String("server", "", "Control plane base URL (required for token-based enrollment)")
 	dailyAt := fs.String("daily-at", "02:00", "Daily time HH:MM (24h)")
 	mode := fs.String("mode", "user", "Install mode: user or system")
@@ -41,8 +40,10 @@ func RunInstall(args []string) error {
 	fs.Var(&includes, "include", "Include path (repeatable)")
 	fs.Var(&excludes, "exclude", "Exclude glob (repeatable)")
 
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("parse flags: %w", err)
+	if help, err := parseFlags(fs, args); err != nil {
+		return err
+	} else if help {
+		return nil
 	}
 
 	cfgFile, err := resolveConfigPathWithMode(*configPath, *mode)

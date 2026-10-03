@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bufio"
-	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -16,14 +15,16 @@ import (
 )
 
 func RunUninstall(args []string) error {
-	fs := flag.NewFlagSet("uninstall", flag.ExitOnError)
+	fs := newFlagSet("uninstall")
 	mode := fs.String("mode", "user", "Uninstall mode: user or system")
 	keepConfig := fs.Bool("keep-config", true, "Keep config directory")
 	purgeState := fs.Bool("purge-state", false, "Permanently delete state, logs and stored credentials")
 	yes := fs.Bool("yes", false, "Skip the confirmation prompt")
 	configPath := fs.String("config", "", "Config path override")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("parse flags: %w", err)
+	if help, err := parseFlags(fs, args); err != nil {
+		return err
+	} else if help {
+		return nil
 	}
 
 	cfgFile, err := resolveConfigPathWithMode(*configPath, *mode)

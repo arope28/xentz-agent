@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log"
 	"time"
@@ -15,10 +14,12 @@ import (
 )
 
 func RunRetention(args []string) error {
-	fs := flag.NewFlagSet("retention", flag.ExitOnError)
+	fs := newFlagSet("retention")
 	configPath := fs.String("config", "", "Config path override")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("parse flags: %w", err)
+	if help, err := parseFlags(fs, args); err != nil {
+		return err
+	} else if help {
+		return nil
 	}
 
 	cfgFile, err := config.ResolvePath(*configPath)

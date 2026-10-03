@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log"
 	"time"
@@ -15,11 +14,13 @@ import (
 )
 
 func RunBackup(args []string) error {
-	fs := flag.NewFlagSet("backup", flag.ExitOnError)
+	fs := newFlagSet("backup")
 	configPath := fs.String("config", "", "Config path override")
 	autoInit := fs.Bool("auto-init", false, "Automatically initialize repository if it doesn't exist (use with caution)")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("parse flags: %w", err)
+	if help, err := parseFlags(fs, args); err != nil {
+		return err
+	} else if help {
+		return nil
 	}
 
 	cfgFile, err := config.ResolvePath(*configPath)

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -15,12 +14,14 @@ import (
 )
 
 func RunUpgrade(args []string) error {
-	fs := flag.NewFlagSet("upgrade", flag.ExitOnError)
+	fs := newFlagSet("upgrade")
 	mode := fs.String("mode", "user", "Upgrade mode: user or system")
 	newBinary := fs.String("binary", "", "Path to new xentz-agent binary")
 	configPath := fs.String("config", "", "Config path override")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("parse flags: %w", err)
+	if help, err := parseFlags(fs, args); err != nil {
+		return err
+	} else if help {
+		return nil
 	}
 	if *newBinary == "" {
 		return fmt.Errorf("--binary is required for upgrade")

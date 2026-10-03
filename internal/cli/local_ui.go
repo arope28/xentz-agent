@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"flag"
 	"fmt"
 	"log"
 	"net/url"
@@ -11,11 +10,13 @@ import (
 )
 
 func RunLocalUI(args []string) error {
-	fs := flag.NewFlagSet("local-ui", flag.ExitOnError)
+	fs := newFlagSet("local-ui")
 	addr := fs.String("addr", "127.0.0.1:9800", "Bind address")
 	configPath := fs.String("config", "", "Config path override")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("parse flags: %w", err)
+	if help, err := parseFlags(fs, args); err != nil {
+		return err
+	} else if help {
+		return nil
 	}
 	cfgFile, err := config.ResolvePath(*configPath)
 	if err != nil {
