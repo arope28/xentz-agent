@@ -4,6 +4,9 @@ import (
 	"embed"
 	"fmt"
 	"html/template"
+	"strings"
+
+	"xentz-agent/internal/config"
 )
 
 //go:embed templates/*.gohtml
@@ -88,8 +91,9 @@ type ConfigPageData struct {
 	DeviceID     string
 	UserID       string
 	ConfigRev    int
-	EnableState  string // "true" or "false" for display, not sensitive values
-	ScheduleCron string
+	EnableBool   bool
+	EnableKnown  bool // false when config carries no explicit enabled flag
+	ScheduleStr  string
 	IncludePaths []string
 	ExcludePaths []string
 	ResticRepo   string
@@ -97,6 +101,44 @@ type ConfigPageData struct {
 	TokenPath    string
 	PasswordFile string
 	ConfigFound  bool
+}
+
+// describeSchedule renders the configured daily backup time. It never invents
+// a schedule: when no time is configured the user is told so plainly.
+func describeSchedule(dailyAt string) string {
+	dailyAt = strings.TrimSpace(dailyAt)
+	if dailyAt == "" {
+		return "Not configured (no daily time set)"
+	}
+	return "Daily at " + dailyAt
+}
+
+// describeRetention summarizes the retention policy instead of showing a
+// placeholder. Returns "Not configured" when no policy values are set.
+func describeRetention(r config.Retention) string {
+	var parts []string
+	add := func(label string, n int) {
+		if n > 0 {
+			parts = append(parts, fmt.Sprintf("%s=%d", label, n))
+		}
+	}
+	add("keep_last", r.KeepLast)
+	add("keep_daily", r.KeepDaily)
+	add("keep_weekly", r.KeepWeekly)
+	add("keep_monthly", r.KeepMonthly)
+	add("keep_yearly", r.KeepYearly)
+
+	if len(parts) == 0 && !r.Prune {
+		return "Not configured"
+	}
+	if len(parts) == 0 {
+		return "prune only"
+	}
+	out := strings.Join(parts, ", ")
+	if r.Prune {
+		out += ", prune"
+	}
+	return out
 }
 
 type RestorePageData struct {

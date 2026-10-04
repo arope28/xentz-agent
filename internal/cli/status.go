@@ -1,94 +1,279 @@
 package cli
 
 import (
-	"flag"
+	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
+	"time"
 
 	"xentz-agent/internal/config"
 	"xentz-agent/internal/report"
 	"xentz-agent/internal/state"
 )
 
+// statusReport is the data behind `xentz-agent status`, shared by the
+// human-readable rendering and the --json output so the two can never drift.
+type statusReport struct {
+	HasBackup      bool          `json:"has_backup"`
+	Backup         state.LastRun `json:"last_backup"`
+	HasRetention   bool          `json:"has_retention"`
+	Retention      state.LastRun `json:"last_retention"`
+	ConfigRev      int           `json:"config_revision"`
+	DailyAt        string        `json:"daily_at"`
+	IncludeCount   int           `json:"include_count"`
+	Enabled        *bool         `json:"enabled"` // nil: server has not set a kill-switch
+	Revoked        bool          `json:"revoked"` // device API key was rejected
+	SpoolCount     int           `json:"spool_count"`
+	SpoolBytes     int64         `json:"spool_bytes"`
+	ModeWarning    string        `json:"mode_warning,omitempty"`
+	RepoConfigured bool          `json:"repo_configured"`
+}
+
 func RunStatus(args []string) error {
-	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	fs := newFlagSet("status")
 	configPath := fs.String("config", "", "Config path override")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("parse flags: %w", err)
+	asJSON := fs.Bool("json", false, "Print machine-readable JSON")
+	if help, err := parseFlags(fs, args); err != nil {
+		return err
+	} else if help {
+		return nil
 	}
+
+	rep, err := collectStatus(*configPath)
+	if err != nil {
+		return err
+	}
+
+	if *asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(rep)
+	}
+
+	printStatusReport(rep)
+	return nil
+}
+
+func collectStatus(configPath string) (statusReport, error) {
+	rep := statusReport{}
 
 	st, err := state.New()
 	if err != nil {
-		return fmt.Errorf("state init: %w", err)
+		return rep, fmt.Errorf("state init: %w", err)
 	}
 
-	configRevision := 0
-	cfgFile, err := config.ResolvePath(*configPath)
+	cfgFile, err := config.ResolvePath(configPath)
 	if err != nil {
 		fmt.Printf("warning: resolve config path: %v\n", err)
 	}
 	if cfgFile != "" {
 		if cfg, err := config.Read(cfgFile); err == nil {
 			if mmErr := ModeMismatchError("status", cfg); mmErr != nil {
-				fmt.Printf("Mode warning: %v\n", mmErr)
+				rep.ModeWarning = mmErr.Error()
 			}
-			configRevision = cfg.ConfigRevision
+			rep.ConfigRev = cfg.ConfigRevision
+			rep.DailyAt = cfg.Schedule.DailyAt
+			rep.IncludeCount = len(cfg.Include)
+			rep.Enabled = cfg.Enabled
+			rep.RepoConfigured = cfg.Restic.Repository != ""
 		}
 	}
-	if configRevision == 0 {
+	if rep.ConfigRev == 0 {
 		if cachedCfg, err := config.ReadCached(); err == nil {
-			configRevision = cachedCfg.ConfigRevision
+			rep.ConfigRev = cachedCfg.ConfigRevision
 		}
 	}
 
-	spoolCount, spoolBytes, _ := report.SpoolStats()
-
-	revoked := false
 	if agentState, ok, _ := st.LoadAgentState(); ok {
-		revoked = agentState.Revoked
+		rep.Revoked = agentState.Revoked
 	}
 
 	last, ok, err := st.LoadLastRun()
 	if err != nil {
-		return fmt.Errorf("load last run: %w", err)
+		return rep, fmt.Errorf("load last run: %w", err)
 	}
-	if !ok {
-		fmt.Println("No backups have run yet.")
-	} else {
-		fmt.Printf("Last backup:\n  status: %s\n  time:   %s\n  dur:    %s\n  data_added: %s\n  error:  %s\n",
-			last.Status, last.TimeUTC, last.Duration, formatStatusBytes(last.BytesSent), last.Error)
-	}
+	rep.HasBackup, rep.Backup = ok, last
 
 	lastRetention, ok, err := st.LoadLastRetentionRun()
 	if err != nil {
-		return fmt.Errorf("load last retention run: %w", err)
+		return rep, fmt.Errorf("load last retention run: %w", err)
 	}
-	if ok {
-		fmt.Println("")
-		fmt.Printf("Last retention:\n  status: %s\n  time:   %s\n  dur:    %s\n  error:  %s\n",
-			lastRetention.Status, lastRetention.TimeUTC, lastRetention.Duration, lastRetention.Error)
-	}
+	rep.HasRetention, rep.Retention = ok, lastRetention
 
-	fmt.Println("")
-	fmt.Printf("Config revision: %d\n", configRevision)
-	fmt.Printf("Spool backlog: %d report(s), %d bytes\n", spoolCount, spoolBytes)
-	fmt.Printf("Revoked: %v\n", revoked)
-	return nil
+	rep.SpoolCount, rep.SpoolBytes, _ = report.SpoolStats()
+	return rep, nil
 }
 
-func formatStatusBytes(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
+func printStatusReport(rep statusReport) {
+	fmt.Println("Backup agent status")
+	fmt.Println()
+
+	if rep.ModeWarning != "" {
+		fmt.Printf("⚠  %s\n", rep.ModeWarning)
 	}
-	div, exp := int64(unit), 0
-	for v := n / unit; v >= unit; v /= unit {
-		div *= unit
-		exp++
+
+	// Device state first: if the server disabled this device, that explains
+	// every stale number below it.
+	switch {
+	case rep.Revoked:
+		fmt.Println("Device          API KEY REJECTED by the server")
+		fmt.Println("                Backups cannot run until the device is re-enrolled.")
+	case rep.Enabled != nil && !*rep.Enabled:
+		fmt.Println("Device          DISABLED by server (kill switch)")
+		fmt.Println("                Backups and restores are stopped until the server re-enables it.")
+	case rep.Enabled != nil:
+		fmt.Println("Device          enabled")
+	default:
+		fmt.Println("Device          no kill-switch set by server")
 	}
-	units := []string{"KB", "MB", "GB", "TB"}
-	s := float64(n) / float64(div)
-	if s == float64(int64(s)) {
-		return fmt.Sprintf("%d %s", int64(s), units[exp])
+	fmt.Println()
+
+	printRun("Last backup", rep.HasBackup, rep.Backup)
+	printRun("Last retention", rep.HasRetention, rep.Retention)
+
+	if rep.SpoolCount == 0 {
+		fmt.Println("Pending reports none (everything has been delivered)")
+	} else {
+		fmt.Printf("Pending reports %d report(s) waiting to send (%s)\n", rep.SpoolCount, formatBackupBytes(rep.SpoolBytes))
 	}
-	return fmt.Sprintf("%.1f %s", s, units[exp])
+
+	fmt.Printf("Config          revision %d", rep.ConfigRev)
+	if strings.TrimSpace(rep.DailyAt) != "" {
+		fmt.Printf(" · %s", describeSchedulePhrase(rep.DailyAt))
+	}
+	if rep.IncludeCount > 0 {
+		fmt.Printf(" · %d path(s) included", rep.IncludeCount)
+	} else {
+		fmt.Printf(" · no include paths configured")
+	}
+	fmt.Println()
+
+	if !rep.RepoConfigured {
+		fmt.Println("⚠  No repository configured - run `xentz-agent install` or `xentz-agent recover`.")
+		fmt.Println("   For a full check of the setup, run `xentz-agent doctor`.")
+		return
+	}
+
+	// Point people at doctor only when something is actually wrong, so the two
+	// commands have a clear split: status = is it OK, doctor = why not.
+	if reasons := statusProblems(rep); len(reasons) > 0 {
+		fmt.Println()
+		fmt.Println("⚠  Needs attention:")
+		for _, r := range reasons {
+			fmt.Printf("   - %s\n", r)
+		}
+		fmt.Println("   Run `xentz-agent doctor` for details, or `xentz-agent backup` to retry now.")
+	}
+}
+
+// statusProblems lists what is wrong from a quick-look perspective.
+func statusProblems(rep statusReport) []string {
+	var out []string
+	switch {
+	case rep.Revoked:
+		out = append(out, "the server rejected this device's API key, so backups cannot run")
+	case rep.Enabled != nil && !*rep.Enabled:
+		out = append(out, "this device is disabled by the server (kill switch)")
+	case !rep.HasBackup:
+		out = append(out, "no backup has run yet on this machine")
+	case rep.Backup.Status != "success":
+		out = append(out, fmt.Sprintf("the last backup failed: %s", firstLine(rep.Backup.Error)))
+	}
+	if rep.IncludeCount == 0 {
+		out = append(out, "no include paths are configured, so a backup would copy nothing")
+	}
+	return out
+}
+
+// firstLine trims a multi-line error down to something that fits on one line.
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "(no error detail recorded)"
+	}
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return strings.TrimSpace(s[:i]) + " ..."
+	}
+	return s
+}
+
+// printRun renders one run in the two-line form: a headline with the age of the
+// run, then the details that are actually populated.
+func printRun(label string, ok bool, run state.LastRun) {
+	if !ok {
+		fmt.Printf("%-16s never run\n\n", label+":")
+		return
+	}
+
+	headline := fmt.Sprintf("%-16s %s · %s", label+":", run.Status, describeAge(run.TimeUTC))
+	if local := formatLocalTime(run.TimeUTC); local != "" {
+		headline += " (" + local + ")"
+	}
+	fmt.Println(headline)
+
+	var details []string
+	if run.DataAddedBytes > 0 {
+		details = append(details, formatBackupBytes(run.DataAddedBytes)+" added")
+	} else if run.BytesSent > 0 {
+		details = append(details, formatBackupBytes(run.BytesSent)+" sent")
+	}
+	if run.FilesTotal > 0 {
+		details = append(details, fmt.Sprintf("%d files scanned", run.FilesTotal))
+	}
+	if run.Duration != "" {
+		details = append(details, "took "+run.Duration)
+	}
+	if run.SnapshotID != "" {
+		details = append(details, "snapshot "+run.SnapshotID)
+	}
+	if len(details) > 0 {
+		fmt.Printf("%-16s %s\n", "", strings.Join(details, " · "))
+	}
+	// Only surface an error when there is one, and keep it to a single line:
+	// the untruncated text is available via `status --json` and the log file.
+	if strings.TrimSpace(run.Error) != "" {
+		fmt.Printf("%-16s %s\n", "", firstLine(run.Error))
+	}
+	fmt.Println()
+}
+
+// formatLocalTime renders an RFC3339 UTC timestamp in the user's own timezone.
+// Returns "" if the value cannot be parsed, so callers can omit it.
+func formatLocalTime(utc string) string {
+	t, err := time.Parse(time.RFC3339, utc)
+	if err != nil {
+		return ""
+	}
+	return t.Local().Format("2006-01-02 15:04") + " local"
+}
+
+// describeAge renders how long ago something happened, in words a user reads
+// quickly ("2 hours ago" rather than a raw UTC timestamp).
+func describeAge(utc string) string {
+	t, err := time.Parse(time.RFC3339, utc)
+	if err != nil {
+		return "at " + utc
+	}
+	d := time.Since(t)
+	if d < 0 {
+		return "in the future (check the system clock)"
+	}
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return pluralize(int(d.Minutes()), "minute") + " ago"
+	case d < 24*time.Hour:
+		return pluralize(int(d.Hours()), "hour") + " ago"
+	default:
+		return pluralize(int(d.Hours()/24), "day") + " ago"
+	}
+}
+
+func pluralize(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("1 %s", noun)
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }

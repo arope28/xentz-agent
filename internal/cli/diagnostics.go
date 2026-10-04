@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"flag"
 	"fmt"
 	"log"
 
@@ -9,10 +8,12 @@ import (
 )
 
 func RunDiagnostics(args []string) error {
-	fs := flag.NewFlagSet("diagnostics", flag.ExitOnError)
+	fs := newFlagSet("diagnostics")
 	outPath := fs.String("out", "", "Output diagnostics bundle path")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("parse flags: %w", err)
+	if help, err := parseFlags(fs, args); err != nil {
+		return err
+	} else if help {
+		return nil
 	}
 	if *outPath == "" {
 		return fmt.Errorf("--out is required")

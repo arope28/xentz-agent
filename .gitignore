@@ -1,6 +1,6 @@
 # Binaries
-xentz-agent
-xentz-agent-*
+/xentz-agent
+/xentz-agent-*
 *.exe
 *.exe~
 *.dll

@@ -2,10 +2,8 @@ package cli
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log"
-	"os"
 	"time"
 
 	"xentz-agent/internal/backup"
@@ -16,11 +14,13 @@ import (
 )
 
 func RunBackup(args []string) error {
-	fs := flag.NewFlagSet("backup", flag.ExitOnError)
+	fs := newFlagSet("backup")
 	configPath := fs.String("config", "", "Config path override")
 	autoInit := fs.Bool("auto-init", false, "Automatically initialize repository if it doesn't exist (use with caution)")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("parse flags: %w", err)
+	if help, err := parseFlags(fs, args); err != nil {
+		return err
+	} else if help {
+		return nil
 	}
 
 	cfgFile, err := config.ResolvePath(*configPath)
@@ -115,7 +115,9 @@ func RunBackup(args []string) error {
 		}
 		log.Printf("backup failed ❌: %s", res.Error)
 		awaitLogShipping(logShipDone)
-		os.Exit(1)
+		// Return rather than os.Exit so the deferred logger.Close still runs
+		// and this failure's log entry is actually written.
+		return failWithCode(fmt.Errorf("backup failed: %s", res.Error), 1)
 	}
 
 	if logger != nil {

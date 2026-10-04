@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"flag"
 	"fmt"
 	"log"
 	"os/exec"
@@ -13,9 +12,11 @@ import (
 )
 
 func RunService(args []string) error {
-	fs := flag.NewFlagSet("service", flag.ExitOnError)
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("parse flags: %w", err)
+	fs := newFlagSet("service")
+	if help, err := parseFlags(fs, args); err != nil {
+		return err
+	} else if help {
+		return nil
 	}
 	if len(fs.Args()) < 1 {
 		return fmt.Errorf("service requires subcommand: install|uninstall|start|stop")
@@ -54,10 +55,12 @@ func RunService(args []string) error {
 		_ = exec.Command("sc", "stop", "XentzAgent").Run()
 		return nil
 	case "run":
-		runFS := flag.NewFlagSet("service run", flag.ExitOnError)
+		runFS := newFlagSet("service run")
 		runConfig := runFS.String("config", "", "Config path for service run")
-		if err := runFS.Parse(fs.Args()[1:]); err != nil {
-			return fmt.Errorf("parse flags: %w", err)
+		if help, err := parseFlags(runFS, fs.Args()[1:]); err != nil {
+			return err
+		} else if help {
+			return nil
 		}
 		if *runConfig == "" {
 			cfgFile, err := config.ResolvePath("")

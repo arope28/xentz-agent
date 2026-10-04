@@ -6,6 +6,16 @@ import (
 	"strings"
 )
 
+// ValidateDailyAt checks a "HH:MM" schedule value using the same parser the
+// platform schedulers use. The CLI calls this before enrolling, so a typo in
+// --daily-at cannot leave a device enrolled with no working schedule.
+func ValidateDailyAt(s string) error {
+	if _, _, err := parseHHMM(s); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Install installs the agent scheduler for the current operating system (default: user mode)
 func Install(configPath string) error {
 	return InstallWithMode(configPath, "")

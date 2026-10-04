@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"flag"
 	"fmt"
 	"log"
 	"strings"
@@ -12,7 +11,7 @@ import (
 )
 
 func RunRecover(args []string) error {
-	fs := flag.NewFlagSet("recover", flag.ExitOnError)
+	fs := newFlagSet("recover")
 	server := fs.String("server", "", "Control plane base URL (required)")
 	mode := fs.String("mode", "user", "Mode: user or system (controls where identity is stored)")
 	configPath := fs.String("config", "", "Config path override")
@@ -20,8 +19,10 @@ func RunRecover(args []string) error {
 	principalIDFlag := fs.String("principal-id", "", "Stable principal ID (optional if identity.json exists)")
 	displayName := fs.String("display-name", "", "Human-friendly name (optional, defaults to current username)")
 
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("parse flags: %w", err)
+	if help, err := parseFlags(fs, args); err != nil {
+		return err
+	} else if help {
+		return nil
 	}
 	if *server == "" {
 		return fmt.Errorf("--server is required")

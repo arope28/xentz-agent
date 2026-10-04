@@ -2,10 +2,8 @@ package cli
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log"
-	"os"
 	"time"
 
 	"xentz-agent/internal/backup"
@@ -16,10 +14,12 @@ import (
 )
 
 func RunRetention(args []string) error {
-	fs := flag.NewFlagSet("retention", flag.ExitOnError)
+	fs := newFlagSet("retention")
 	configPath := fs.String("config", "", "Config path override")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("parse flags: %w", err)
+	if help, err := parseFlags(fs, args); err != nil {
+		return err
+	} else if help {
+		return nil
 	}
 
 	cfgFile, err := config.ResolvePath(*configPath)
@@ -108,7 +108,8 @@ func RunRetention(args []string) error {
 		}
 		log.Printf("retention failed ❌: %s", res.Error)
 		awaitLogShipping(logShipDone)
-		os.Exit(1)
+		// Return rather than os.Exit so the deferred logger.Close still runs.
+		return failWithCode(fmt.Errorf("retention failed: %s", res.Error), 1)
 	}
 
 	if logger != nil {

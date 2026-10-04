@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -20,7 +19,7 @@ func (m *configMultiFlag) Set(v string) error {
 }
 
 func RunConfig(args []string) error {
-	fs := flag.NewFlagSet("config", flag.ExitOnError)
+	fs := newFlagSet("config")
 	configPath := fs.String("config", "", "Config path override")
 	var addIncludes configMultiFlag
 	var removeIncludes configMultiFlag
@@ -34,8 +33,10 @@ func RunConfig(args []string) error {
 	fs.Var(&addExcludes, "add-exclude", "Add exclude pattern (repeatable)")
 	fs.Var(&removeExcludes, "remove-exclude", "Remove exclude pattern (repeatable)")
 
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("parse flags: %w", err)
+	if help, err := parseFlags(fs, args); err != nil {
+		return err
+	} else if help {
+		return nil
 	}
 
 	cfgFile, err := config.ResolvePath(*configPath)

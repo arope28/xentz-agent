@@ -20,6 +20,13 @@ type Server struct {
 
 const restoreTimeout = 20 * time.Minute
 
+// ResolveToken returns the local UI access token, generating it on first use.
+// Callers use it to print a URL the user can open directly, since the token
+// is required by every endpoint except "/".
+func ResolveToken() (string, error) {
+	return ensureToken()
+}
+
 func Start(addr string, cfgPath string) error {
 	if addr == "" {
 		addr = "127.0.0.1:9800"

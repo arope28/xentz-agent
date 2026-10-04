@@ -39,7 +39,7 @@ footer.notes{margin-top:28px;font-size:12px;color:var(--muted)}#diag-toast{displ
 <body>
 
 <h1>xentz-agent Backup Dashboard</h1>
-<nav class="page-nav"><a href="#dashboard">Dashboard</a><a href="/restore?token={{.Token}}">Restore Wizard</a></nav>
+<nav class="page-nav"><a href="#dashboard">Dashboard</a><a href="/config?token={{.Token}}">Configuration</a><a href="/restore?token={{.Token}}">Restore Wizard</a></nav>
 
 <div id="pg-dashboard">
   <div class="grid4">
@@ -53,13 +53,12 @@ footer.notes{margin-top:28px;font-size:12px;color:var(--muted)}#diag-toast{displ
     <h3>Backup Scope</h3>
     <div class="section-title">Include Paths</div>
     <div class="include-list" id="include-list"></div>
-    <div class="section-title" style="margin-top:14px">Schedule & Retention</div>
+    <div class="section-title" style="margin-top:14px">Schedule &amp; Retention</div>
     <p class="hint" id="sched-detail"></p>
   </div>
 
   <div class="actions-row">
-    <button class="btn-primary primary"><span>&#x1f504; Save Config</span></button>
-    <button class="btn-muted primary"><span>&#x2713; Pause/Resume Backups</span></button>
+    <button class="btn-muted" type="button" onclick="makeDiag()">Create diagnostics bundle</button>
   </div>
 </div>
 
@@ -67,11 +66,76 @@ footer.notes{margin-top:28px;font-size:12px;color:var(--muted)}#diag-toast{displ
 This page is served by the xentz-agent local UI.</footer>
 <div id="diag-toast"></div>
 
-<script>const T=`{{.Token}}`;async function f(p){try{const r=await fetch('/status?json=1&token='+encodeURIComponent(T));return r.ok?r.json():null}catch(e){return null}}
-function badge(id,k,h){document.getElementById(id).innerHTML='<span class="chip'+(k?' '+k:'')+'">'+h+'</span>'}
-async function load(){try{const d=await f();if(!d)return;badge('st-badge','ok','Healthy');
-badge('last-bk-time','',d.last_backup?new Date(d.last_backup.time_utc).toLocaleString():'Never');
-badge('last-ret-time','',d.last_retention?new Date(d.last_retention.time_utc||d.last_retention).toLocaleString():'Never');
-badge('ks-badge',d.revoked?'warn':'ok', d.revoked?'Disabled':'Enabled')}catch(e){badge('st-badge','err',e.message)}}load();</script>
+<script>
+const T=`{{.Token}}`;
+const qs=p=>p+(p.indexOf('?')>=0?'&':'?')+'token='+encodeURIComponent(T);
+const badge=(id,k,h)=>{document.getElementById(id).innerHTML='<span class="chip'+(k?' '+k:'')+'">'+h+'</span>'};
+const txt=(id,v)=>{document.getElementById(id).textContent=v};
+// Accepts an RFC3339 string or an object with time_utc, so this keeps working
+// whether the value came from /status?json=1 or a future richer payload.
+function asTime(v){return !v?'':typeof v==='string'?v:(v.time_utc||'')}
+function fmtTime(v){const s=asTime(v);if(!s)return 'Never';const d=new Date(s);return isNaN(d.getTime())?s:d.toLocaleString()}
+function relTime(v){const s=asTime(v);if(!s)return '';const d=new Date(s);if(isNaN(d.getTime()))return '';
+  const mins=Math.round((Date.now()-d.getTime())/60000);
+  if(mins<1)return 'just now';
+  if(mins<60)return mins+' min ago';
+  const hrs=Math.round(mins/60);if(hrs<24)return hrs+' hour'+(hrs===1?'':'s')+' ago';
+  const days=Math.round(hrs/24);return days+' day'+(days===1?'':'s')+' ago'}
+async function jfetch(p){try{const r=await fetch(qs(p));return r.ok?await r.json():null}catch(e){return null}}
+function plural(n,w){return n+' '+w+(n===1?'':'s')}
+
+async function load(){
+  const d=await jfetch('/status?json=1');
+  if(!d){badge('st-badge','err','Unavailable');txt('st-detail','Could not read agent status from the agent.');return}
+
+  const enabled=d.enabled!==false;
+  const bs=d.last_backup_status||'';
+  let kind='ok',head='Healthy',detail='';
+  if(d.revoked){kind='err';head='Re-enrollment required';detail='The server rejected this device key. Ask your administrator to re-enroll.';}
+  else if(!enabled){kind='warn';head='Disabled by server';detail='Backups and restores are stopped by the kill switch.';}
+  else if(bs&&bs!=='success'){kind='err';head='Last backup failed';detail='Run "xentz-agent backup" in a terminal, then "xentz-agent status".';}
+  else if(!d.last_backup){kind='warn';head='No backups yet';detail='Run "xentz-agent backup" in a terminal to start one now.';}
+  else{head='Healthy';detail='Last backup '+relTime(d.last_backup);}
+  badge('st-badge',kind,head);txt('st-detail',detail);
+
+  badge('last-bk-time','',fmtTime(d.last_backup));
+  txt('last-bk-detail',d.last_backup?relTime(d.last_backup)+' · '+bs+' · '+plural(d.last_backup_files||0,'file')+' scanned':'No backups recorded yet');
+  badge('last-ret-time','',fmtTime(d.last_retention));
+  txt('last-ret-detail',d.last_retention?relTime(d.last_retention)+' · '+d.last_retention_status:'No retention run recorded yet');
+
+  if(d.revoked){badge('ks-badge','err','Revoked');txt('ks-detail','Device API key was rejected by the server.');}
+  else if(!enabled){badge('ks-badge','warn','Disabled');txt('ks-detail','Server disabled this device (kill switch).');}
+  else{badge('ks-badge','ok','Enabled');txt('ks-detail','Backups are running.');}
+
+  const inc=Array.isArray(d.include)?d.include:[],exc=Array.isArray(d.exclude)?d.exclude:[];
+  const list=document.getElementById('include-list');list.innerHTML='';
+  if(inc.length===0){const s=document.createElement('span');s.className='hint';s.textContent='No include paths configured';list.appendChild(s);}
+  else inc.forEach(p=>{const s=document.createElement('span');s.className='path-chip';s.textContent=p;list.appendChild(s)});
+  let sched=d.daily_at?('Daily at '+d.daily_at):'No daily backup time configured';
+  if(exc.length)sched+=' · '+plural(exc.length,'exclude pattern');
+  if(d.retention_summary)sched+=' · retention: '+d.retention_summary;
+  txt('sched-detail',sched);
+  document.getElementById('config-summary-card').style.display='block';
+}
+
+async function makeDiag(){
+  const el=document.getElementById('diag-toast');
+  try{
+    const r=await fetch(qs('/diagnostics'));
+    if(!r.ok)throw new Error('request failed');
+    const d=await r.json();
+    // Use text nodes for the path: it is agent-generated, but a state dir
+    // containing HTML characters must not be parsed as markup.
+    el.textContent='Diagnostics bundle created: ';
+    const code=document.createElement('code');
+    code.textContent=d.path;
+    el.appendChild(code);
+  }catch(e){el.textContent='Could not create the diagnostics bundle. Try "xentz-agent diagnostics".'}
+  el.style.display='block';
+  setTimeout(()=>{el.style.display='none'},10000);
+}
+
+load();
+</script>
 </body>
 </html>
